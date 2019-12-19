@@ -1,0 +1,13 @@
+name = "ModelKit"
+uuid = "4ba45528-c0ec-4d03-9092-87a18bf21995"
+authors = ["Sascha Timme <sascha@timme.xyz>"]
+version = "0.1.0"
+
+[compat]
+julia = "1"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
