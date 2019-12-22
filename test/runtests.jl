@@ -51,6 +51,21 @@ using Test
 
     @testset "Linear Algebra" begin
         @var x[1:2, 1:2]
-        @test det(x) == -x[2,1]*x[1,2] + x[2,2]*x[1,1]
+        @test det(x) == -x[2, 1] * x[1, 2] + x[2, 2] * x[1, 1]
+    end
+
+    @testset "Differentation" begin
+        @var x y
+
+        f = x^2 + y^2
+        g = x^3 + y^3
+
+        @test differentiate(f, x) == 2x
+        @test differentiate(f, x, 2) == 2
+        @test differentiate(f, [x, y]) == [2x, 2y]
+
+        @test differentiate([f, g], x) == [2x, 3 * x^2]
+        @test differentiate([f, g], x, 2) == [2, 6x]
+        @test differentiate([f, g], [x, y]) == [2x 2y; 3 * x^2 3 * y^2]
     end
 end

@@ -1,6 +1,6 @@
 module ModelKit
 
-export @var, @unique_var, Variable, variables, nvariables, subs, evaluate
+export @var, @unique_var, Variable, variables, nvariables, subs, evaluate, differentiate
 
 import LinearAlgebra
 import SymEngine
@@ -269,6 +269,34 @@ function LinearAlgebra.det(A::Matrix{<:Expression})
 end
 function LinearAlgebra.lu(A::Matrix{<:Expression})
     LinearAlgebra.lu(convert(SymEngine.CDenseMatrix, A))
+end
+
+
+"""
+    differentiate(expr::Expression, var::Variable, k = 1)
+    differentiate(expr::Expression, var::Vector{Variable})
+    differentiate(expr::::Vector{<:Expression}, var::Variable, k = 1)
+    differentiate(expr::Vector{<:Expression}, var::Vector{Variable})
+
+Compute the derivative of `expr` with respect to the given variable `var`.
+"""
+differentiate(expr::Expression, var::Variable) = SymEngine.diff(expr, var)
+differentiate(expr::Expression, var::Variable, k) = SymEngine.diff(expr, var, k)
+function differentiate(expr::Expression, vars::AbstractVector{Variable})
+    [SymEngine.diff(expr, v) for v in vars]
+end
+
+function differentiate(exprs::AbstractVector{<:Expression}, var::Variable)
+    [differentiate(e, var) for e in exprs]
+end
+function differentiate(exprs::AbstractVector{<:Expression}, var::Variable, k)
+    [differentiate(e, var, k) for e in exprs]
+end
+function differentiate(
+    exprs::AbstractVector{<:Expression},
+    vars::AbstractVector{Variable},
+)
+    [differentiate(e, v) for e in exprs, v in vars]
 end
 
 end # module
