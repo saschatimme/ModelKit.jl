@@ -1,8 +1,8 @@
 module ModelKit
 
-export @var, @unique_var, Variable, variables, nvariables
+export @var, @unique_var, Variable, variables, nvariables, subs, evaluate
 
-
+import LinearAlgebra
 import SymEngine
 
 
@@ -184,5 +184,91 @@ nvariables(E::Union{Expression,AbstractVector{<:Expression}}, p = Variable[]) =
     length(variables(E, p))
 
 
+"""
+    subs(expr::Expression, subs::Pair{Variable,<:Expression}...)
+    subs(expr::Expression, subs::Pair{AbstractArray{<:Variable},AbstractArray{<:Expression}}...)
+
+Substitute into the given expression.
+
+## Example
+
+```
+@var x y z
+
+julia> subs(x^2, x => y)
+y ^ 2
+
+julia> subs(x * y, [x,y] => [x+2,y+2])
+(x + 2) * (y + 2)
+```
+"""
+subs(exprs, args...) = map(e -> subs(e, args...), exprs)
+function subs(
+    expr::Expression,
+    sub_pairs::Union{
+        Pair{Variable,<:Union{Number,Expression}},
+        Pair{
+            <:AbstractArray{Variable},
+            <:AbstractArray{<:Union{Number,Expression}},
+        },
+    }...,
+)
+    new_expr = expr
+    for sub in sub_pairs
+        new_expr = _subs(new_expr, sub)
+    end
+    new_expr
+end
+function _subs(expr::Expression, args...)
+    SymEngine.subs(expr, args...)
+end
+function _subs(
+    expr::Expression,
+    sub_pairs::Pair{
+        <:AbstractArray{Variable},
+        <:AbstractArray{<:Union{Number,Expression}},
+    },
+)
+    length(first(sub_pairs)) == length(last(sub_pairs)) ||
+    error(ArgumentError("Substitution arguments don't have the same length."))
+
+    list_of_tuples = map(tuple, first(sub_pairs), last(sub_pairs))
+    SymEngine.subs(expr, list_of_tuples...)
+end
+
+"""
+    evaluate(expr::Expression, subs::Pair{Variable,<:Any}...)
+    evaluate(expr::Expression, subs::Pair{AbstractArray{<:Variable},AbstractArray{<:Any}}...)
+
+Evaluate the given expression.
+
+## Example
+
+```
+@var x y
+
+julia> evaluate(x^2, x => 2)
+4
+
+julia> evaluate(x * y, [x,y] => [2, 3])
+6
+"""
+function evaluate(
+    expr::Union{Expression,AbstractArray{<:Expression}},
+    pairs::Union{
+        Pair{Variable,<:Number},
+        Pair{<:AbstractArray{Variable},<:AbstractArray{<:Number}},
+    }...,
+)
+    SymEngine.N.(subs(expr, pairs...))
+end
+
+
+function LinearAlgebra.det(A::Matrix{<:Expression})
+    LinearAlgebra.det(convert(SymEngine.CDenseMatrix, A))
+end
+function LinearAlgebra.lu(A::Matrix{<:Expression})
+    LinearAlgebra.lu(convert(SymEngine.CDenseMatrix, A))
+end
 
 end # module
