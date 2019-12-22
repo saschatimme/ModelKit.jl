@@ -1,6 +1,14 @@
 module ModelKit
 
-export @var, @unique_var, Variable, variables, nvariables, subs, evaluate, differentiate
+export @var,
+    @unique_var,
+    Variable,
+    variables,
+    nvariables,
+    subs,
+    evaluate,
+    differentiate,
+    monomials
 
 import LinearAlgebra
 import SymEngine
@@ -49,6 +57,7 @@ map_subscripts(indices) = join(INDEX_MAP[c] for c in string(indices))
 
 # type piracy here
 Base.show(io::IO, v::Type{Variable}) = print(io, "Variable")
+Base.show(io::IO, v::Type{<:Expression}) = print(io, "Expression")
 
 """
     @var(args...)
@@ -297,6 +306,58 @@ function differentiate(
     vars::AbstractVector{Variable},
 )
     [differentiate(e, v) for e in exprs, v in vars]
+end
+
+"""
+    monomials(vars::Vector{<:Variable}, d; homogeneous::Bool = false)
+
+Create all monomials of a given degree.
+
+```
+julia> @var x y
+(x, y)
+
+julia> monomials([x,y], 2)
+6-element Array{Expression,1}:
+   1
+   x
+   y
+ x^2
+ x*y
+ y^2
+
+julia> monomials([x,y], 2; homogeneous = true)
+3-element Array{Operation,1}:
+ x ^ 2
+ x * y
+ y ^ 2
+ ```
+"""
+function monomials(
+    vars::AbstractVector{Variable},
+    d::Integer;
+    homogeneous::Bool = false,
+)
+    n = length(vars)
+    if homogeneous
+        pred = x -> sum(x) == d
+    else
+        pred = x -> sum(x) ≤ d
+    end
+    exps = collect(Iterators.filter(
+        pred,
+        Iterators.product(Iterators.repeated(0:d, n)...),
+    ))
+    sort!(exps, lt = td_order)
+    map(exps) do exp
+        prod(i -> vars[i]^exp[i], 1:n)
+    end
+end
+
+function td_order(x, y)
+    sx = sum(x)
+    sy = sum(y)
+    sx == sy ? x > y : sx < sy
 end
 
 end # module
