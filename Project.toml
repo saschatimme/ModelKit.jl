@@ -3,6 +3,9 @@ uuid = "4ba45528-c0ec-4d03-9092-87a18bf21995"
 authors = ["Sascha Timme <sascha@timme.xyz>"]
 version = "0.1.0"
 
+[deps]
+SymEngine = "123dc426-2d89-5057-bbad-38513e3affd8"
+
 [compat]
 julia = "1"
 
