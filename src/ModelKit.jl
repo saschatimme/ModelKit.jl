@@ -8,7 +8,8 @@ export @var,
     subs,
     evaluate,
     differentiate,
-    monomials
+    monomials,
+    expand
 
 import LinearAlgebra
 import SymEngine
@@ -359,5 +360,23 @@ function td_order(x, y)
     sy = sum(y)
     sx == sy ? x > y : sx < sy
 end
+
+"""
+    expand(e::Expression)
+
+Expand a given expression.
+
+```julia
+julia> @var x y
+(x, y)
+
+julia> f = (x + y) ^ 2
+(x + y)^2
+
+julia> expand(f)
+2*x*y + x^2 + y^2
+```
+"""
+expand(e::Expression) = SymEngine.expand(e)
 
 end # module

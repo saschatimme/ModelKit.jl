@@ -68,4 +68,9 @@ using Test
         @test differentiate([f, g], x, 2) == [2, 6x]
         @test differentiate([f, g], [x, y]) == [2x 2y; 3 * x^2 3 * y^2]
     end
+
+    @testset "Expand" begin
+        @var x y
+        @test expand((x + y) ^ 2) == 2*x*y + x^2 + y^2
+    end
 end
