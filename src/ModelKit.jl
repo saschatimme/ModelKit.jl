@@ -9,11 +9,11 @@ export @var,
     evaluate,
     differentiate,
     monomials,
-    expand
+    expand,
+    System,
+    Homotopy
 
-import LinearAlgebra
-import SymEngine
-
+import LinearAlgebra, GeneralizedGenerated, SymEngine
 
 ## From the SymEngine source code
 ##
@@ -31,8 +31,13 @@ import SymEngine
 const Variable = SymEngine.BasicType{Val{:Symbol}}
 const Expression = SymEngine.SymbolicType
 
+# Fixes in SymEngine
 Base.promote_rule(::Type{Variable}, ::Type{SymEngine.Basic}) = SymEngine.Basic
 Base.promote_rule(::Type{SymEngine.Basic}, ::Type{Variable}) = SymEngine.Basic
+
+Base.hash(x::Variable, h::UInt) = hash(SymEngine.Basic(x), h)
+Base.hash(x::SymEngine.Basic, h::UInt) = Base.hash_uint(3h - hash(x))
+
 ## Variable construction
 
 function Variable(name::Union{Symbol,AbstractString})
@@ -56,9 +61,13 @@ const INDEX_MAP = Dict{Char,Char}(
 )
 map_subscripts(indices) = join(INDEX_MAP[c] for c in string(indices))
 
+Base.convert(::Type{Variable}, v::Union{AbstractString, Symbol}) = Variable(v)
+Base.convert(::Type{Expr}, v::Variable) = Symbol(v)
+Symbol(v::Variable) = Symbol(SymEngine.toString(v))
 # type piracy here
 Base.show(io::IO, v::Type{Variable}) = print(io, "Variable")
-Base.show(io::IO, v::Type{<:Expression}) = print(io, "Expression")
+Base.show(io::IO, v::Type{SymEngine.Basic}) = print(io, "Expression")
+
 
 """
     @var(args...)
@@ -216,11 +225,8 @@ subs(exprs, args...) = map(e -> subs(e, args...), exprs)
 function subs(
     expr::Expression,
     sub_pairs::Union{
-        Pair{Variable,<:Union{Number,Expression}},
-        Pair{
-            <:AbstractArray{Variable},
-            <:AbstractArray{<:Union{Number,Expression}},
-        },
+        Pair{Variable,<:Number},
+        Pair{<:AbstractArray{Variable},<:AbstractArray{<:Number}},
     }...,
 )
     new_expr = expr
@@ -234,10 +240,7 @@ function _subs(expr::Expression, args...)
 end
 function _subs(
     expr::Expression,
-    sub_pairs::Pair{
-        <:AbstractArray{Variable},
-        <:AbstractArray{<:Union{Number,Expression}},
-    },
+    sub_pairs::Pair{<:AbstractArray{Variable},<:AbstractArray{<:Number}},
 )
     length(first(sub_pairs)) == length(last(sub_pairs)) ||
     error(ArgumentError("Substitution arguments don't have the same length."))
@@ -245,6 +248,19 @@ function _subs(
     list_of_tuples = map(tuple, first(sub_pairs), last(sub_pairs))
     SymEngine.subs(expr, list_of_tuples...)
 end
+
+# trait
+is_number_type(::Expression) = Val{false}()
+for T in SymEngine.number_types
+    @eval begin
+        is_number_type(::SymEngine.BasicType{Val{$(QuoteNode(T))}}) =
+            Val{true}()
+    end
+end
+
+unpack_number(e::Expression) = unpack_number(e, is_number_type(e))
+unpack_number(e::Expression, ::Val{true}) = SymEngine.N(e)
+unpack_number(e::Expression, ::Val{false}) = e
 
 """
     evaluate(expr::Expression, subs::Pair{Variable,<:Any}...)
@@ -270,8 +286,14 @@ function evaluate(
         Pair{<:AbstractArray{Variable},<:AbstractArray{<:Number}},
     }...,
 )
-    SymEngine.N.(subs(expr, pairs...))
+    unpack_number.(subs(expr, pairs...))
 end
+(f::SymEngine.Basic)(
+    pairs::Union{
+        Pair{Variable,<:Number},
+        Pair{<:AbstractArray{Variable},<:AbstractArray{<:Number}},
+    }...,
+) = evaluate(f, pairs...)
 
 
 function LinearAlgebra.det(A::Matrix{<:Expression})
@@ -378,5 +400,343 @@ julia> expand(f)
 ```
 """
 expand(e::Expression) = SymEngine.expand(e)
+
+
+#########################
+## System and Homotopy ##
+#########################
+
+
+############
+## System ##
+############
+
+function check_vars_params(f, vars, params)
+    vars_params = params === nothing ? vars : [vars; params]
+    Δ = setdiff(variables(f), vars_params)
+    isempty(Δ) || throw(ArgumentError(
+        "Not all variables or parameters of the system are given. Missing: " *
+        join(Δ, ", "),
+    ))
+    nothing
+end
+
+"""
+    System(exprs, vars, parameters = Variable[])
+
+Create a system from the given `exprs`. `vars` are the given variables and determines
+the variable ordering.
+
+## Example
+```julia
+julia> @var x y;
+julia> H = System([x^2, y^2], [y, x]);
+julia> H([2, 3], 0)
+2-element Array{Int64,1}:
+ 4
+ 9
+```
+
+It is also possible to declare additional variables.
+```julia
+julia> @var x y t a b;
+julia> H = Homotopy([x^2 + a, y^2 + b^2], [x, y], [a, b]);
+julia> H([2, 3], [5, 2])
+2-element Array{Int64,1}:
+ 9
+ 13
+```
+"""
+struct System
+    expressions::Vector{Expression}
+    variables::Vector{Variable}
+    parameters::Vector{Variable}
+    # automatically computed
+    jacobian::Matrix{Expression}
+
+    function System(
+        exprs::Vector{Expression},
+        vars::Vector{Variable},
+        params::Vector{Variable},
+    )
+        check_vars_params(exprs, vars, params)
+        jacobian = [differentiate(e, v) for e in exprs, v in vars]
+        new(exprs, vars, params, jacobian)
+    end
+end
+
+function System(
+    exprs::Vector{<:Expression},
+    variables::Vector{Variable},
+    parameters::Vector{Variable} = Variable[],
+)
+    System(convert(Vector{Expression}, exprs), variables, parameters)
+end
+
+function Base.show(io::IO, F::System)
+    if !get(io, :compact, false)
+        println(io, "System")
+        print(io, " variables: ", join(F.variables, ", "))
+        if !isempty(F.parameters)
+            print(io, "\n parameters: ", join(F.parameters, ", "))
+        end
+        print(io, "\n\n")
+        for i = 1:length(F)
+            print(io, " ", F.expressions[i])
+            i < length(F) && print(io, "\n")
+        end
+    else
+        print(io, "[")
+        for i = 1:length(F)
+            print(io, F.expressions[i])
+            i < length(F) && print(io, ", ")
+        end
+        print(io, "]")
+    end
+end
+
+evaluate(F::System, x::AbstractVector) =
+    evaluate(F.expressions, F.variables => x)
+function evaluate(F::System, x::AbstractVector, p::AbstractVector)
+    evaluate(F.expressions, F.variables => x, F.parameters => p)
+end
+(F::System)(x::AbstractVector) = evaluate(F, x)
+(F::System)(x::AbstractVector, p::AbstractVector) = evaluate(F, x, p)
+
+jacobian(F::System, x::AbstractVector) = evaluate(F.jacobian, F.variables => x)
+function jacobian(F::System, x::AbstractVector, p::AbstractVector)
+    evaluate(F.jacobian, F.variables => x, F.parameters => p)
+end
+
+
+function Base.:(==)(F::System, G::System)
+    F.expressions == G.expressions &&
+    F.variables == G.variables && F.parameters == G.parameters
+end
+
+Base.size(F::System) = (length(F.expressions), length(F.variables))
+Base.size(F::System, i::Integer) = size(F)[i]
+Base.length(F::System) = length(F.expressions)
+
+variables(F::System, parameters = nothing) = variables(F.variables)
+
+Base.iterate(F::System) = iterate(F.expressions)
+Base.iterate(F::System, state) = iterate(F.expressions, state)
+
+##############
+## Homotopy ##
+##############
+"""
+    Homotopy(exprs, vars, t, parameters = Variable[])
+
+Create a homotopy from the given `exprs`. `vars` are the given variables and determines
+the variable ordering, `t` is the dedicated variable along which is "homotopied".
+
+## Example
+```julia
+julia> @var x y t;
+julia> H = Homotopy([x + t, y + 2t], [y, x], t);
+julia> H([2, 3], 0)
+2-element Array{Int64,1}:
+ 3
+ 2
+
+
+julia> H([2, 3], 1)
+2-element Array{Int64,1}:
+ 4
+ 4
+```
+
+It is also possible to declare additional variables.
+```julia
+julia> @var x y t a b;
+julia> H = Homotopy([x^2 + t*a, y^2 + t*b], [x, y], t, [a, b]);
+julia> H([2, 3], 1, [5, 2])
+2-element Array{Int64,1}:
+ 9
+ 11
+```
+"""
+struct Homotopy
+    expressions::Vector{Expression}
+    variables::Vector{Variable}
+    t::Variable
+    parameters::Vector{Variable}
+    # automatically computed
+    jacobian::Matrix{Expression}
+    dt::Vector{Expression}
+
+    function Homotopy(
+        exprs::Vector{Expression},
+        vars::Vector{Variable},
+        t::Variable,
+        params::Vector{Variable},
+    )
+        check_vars_params(exprs, [vars; t], params)
+        jacobian = [differentiate(e, v) for e in exprs, v in vars]
+        dt = [differentiate(e, t) for e in exprs]
+        new(exprs, vars, t, params, jacobian, dt)
+    end
+end
+
+function Homotopy(
+    exprs::Vector{<:Expression},
+    variables::Vector{Variable},
+    t::Variable,
+    parameters::Vector{Variable} = Variable[],
+)
+    Homotopy(convert(Vector{Expression}, exprs), variables, t, parameters)
+end
+
+function Base.show(io::IO, H::Homotopy)
+    if !get(io, :compact, false)
+        println(io, "Homotopy in ", H.t)
+        print(io, " variables: ", join(H.variables, ", "))
+        if !isempty(H.parameters)
+            print(io, "\n parameters: ", join(H.parameters, ", "))
+        end
+        print(io, "\n\n")
+        for i = 1:length(H)
+            print(io, " ", H.expressions[i])
+            i < length(H) && print(io, "\n")
+        end
+    else
+        print(io, "[")
+        for i = 1:length(H)
+            print(io, H.expressions[i])
+            i < length(H) && print(io, ", ")
+        end
+        print(io, "]")
+    end
+end
+
+evaluate(H::Homotopy, x::AbstractVector, t) =
+    evaluate(H.expressions, H.variables => x, H.t => t)
+function evaluate(H::Homotopy, x::AbstractVector, t, p::AbstractVector)
+    evaluate(H.expressions, H.variables => x, H.t => t, H.parameters => p)
+end
+(H::Homotopy)(x::AbstractVector, t) = evaluate(H, x, t)
+(H::Homotopy)(x::AbstractVector, t, p::AbstractVector) = evaluate(H, x, t, p)
+
+function jacobian(H::Homotopy, x::AbstractVector, t)
+    evaluate(H.jacobian, H.variables => x, H.t => t)
+end
+function jacobian(H::Homotopy, x::AbstractVector, t, p::AbstractVector)
+    evaluate(H.jacobian, H.variables => x, H.t => t, H.parameters => p)
+end
+
+function dt(H::Homotopy, x::AbstractVector, t)
+    evaluate(H.dt, H.variables => x, H.t => t)
+end
+function dt(H::Homotopy, x::AbstractVector, t, p::AbstractVector)
+    evaluate(H.dt, H.variables => x, H.t => t, H.parameters => p)
+end
+
+function Base.:(==)(H::Homotopy, G::Homotopy)
+    H.expressions == G.expressions &&
+    H.variables == G.variables && H.parameters == G.parameters
+end
+
+Base.size(H::Homotopy) = (length(H.expressions), length(H.variables))
+Base.size(H::Homotopy, i::Integer) = size(H)[i]
+Base.length(H::Homotopy) = length(H.expressions)
+
+#############
+## CODEGEN ##
+#############
+
+function to_type_level(
+    f::Vector{<:Expression},
+    var_order::AbstractVector{Variable},
+    param_order::AbstractVector{Variable} = Variable[],
+)
+    Tuple{
+        GeneralizedGenerated.NGG.to_typelist(convert.(Expr, f)),
+        GeneralizedGenerated.NGG.to_typelist(convert.(Expr, var_order)),
+        GeneralizedGenerated.NGG.to_typelist(convert.(Expr, param_order)),
+    }
+end
+function from_type_level(::Type{Tuple{E,V,P}}) where {E,V,P}
+    convert.(SymEngine.Basic, GeneralizedGenerated.from_type(E)),
+    Variable.(GeneralizedGenerated.from_type(V)),
+    Variable.(GeneralizedGenerated.from_type(P))
+end
+
+struct TSystem{TS,TE,V,P} end
+
+type_level(sys::System) =
+    typeof(TSystem(sys.expressions, sys.variables, sys.parameters))
+function TSystem(
+    exprs::Vector{<:Expression},
+    var_order::AbstractVector{Variable},
+    param_order::AbstractVector{Variable} = Variable[],
+)
+    TS = Tuple{length(exprs),length(var_order),length(param_order)}
+    TE = GeneralizedGenerated.NGG.to_typelist(convert.(Expr, exprs))
+    V = GeneralizedGenerated.NGG.to_typelist(Symbol.(var_order))
+    P = GeneralizedGenerated.NGG.to_typelist(Symbol.(param_order))
+    TSystem{TS,TE,V,P}()
+end
+
+Base.show(io::IO, ::Type{T}) where {T<:TSystem} = show_info(io, T)
+function Base.show(io::IO, TS::TSystem)
+    show_info(io, typeof(TS))
+    print(io, "()")
+end
+function show_info(
+    io::IO,
+    ::Type{TSystem{Tuple{n,N,m},TE,V,P}},
+) where {n,N,m,TE,V,P}
+    print(io, "TSystem{$n,$N,$m,#$(hash(TE))}")
+end
+
+interpret(TS::TSystem) = interpret(typeof(TS))
+function interpret(::Type{TSystem{TS,TE,V,P}}) where {TS,TE,V,P}
+    exprs = convert.(SymEngine.Basic, GeneralizedGenerated.from_type(TE))
+    vars = Variable.(GeneralizedGenerated.from_type(V))
+    params =
+        convert(Vector{Variable}, collect(GeneralizedGenerated.from_type(P)))
+    System(exprs, vars, params)
+end
+
+
+struct THomotopy{TS,TE,V,T,P} end
+
+type_level(sys::Homotopy) =
+    typeof(THomotopy(sys.expressions, sys.variables, sys.t, sys.parameters))
+function THomotopy(
+    exprs::Vector{<:Expression},
+    var_order::AbstractVector{<:Variable},
+    t::Variable,
+    param_order::AbstractVector{<:Variable} = Variable[],
+)
+    TS = Tuple{length(exprs),length(var_order),length(param_order)}
+    TE = GeneralizedGenerated.NGG.to_typelist(convert.(Expr, exprs))
+    V = GeneralizedGenerated.NGG.to_typelist(Symbol.(var_order))
+    T = Symbol(t)
+    P = GeneralizedGenerated.NGG.to_typelist(Symbol.(param_order))
+    THomotopy{TS,TE,V,T,P}()
+end
+
+Base.show(io::IO, ::Type{T}) where {T<:THomotopy} = show_info(io, T)
+function Base.show(io::IO, TS::THomotopy)
+    show_info(io, typeof(TS))
+    print(io, "()")
+end
+function show_info(io::IO, ::Type{<:THomotopy{Tuple{n,N,m},TE}}) where {n,N,m,TE}
+    print(io, "THomotopy{$n,$N,$m,#$(hash(TE))}")
+end
+
+interpret(TS::THomotopy) = interpret(typeof(TS))
+function interpret(::Type{THomotopy{TS,TE,V,T,P}}) where {TS,TE,V,T,P}
+    exprs = convert.(SymEngine.Basic, GeneralizedGenerated.from_type(TE))
+    vars = Variable.(GeneralizedGenerated.from_type(V))
+    t = Variable(T)
+    params =
+        convert(Vector{Variable}, collect(GeneralizedGenerated.from_type(P)))
+
+    Homotopy(exprs, vars, t, params)
+end
 
 end # module

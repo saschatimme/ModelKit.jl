@@ -71,6 +71,114 @@ using Test
 
     @testset "Expand" begin
         @var x y
-        @test expand((x + y) ^ 2) == 2*x*y + x^2 + y^2
+        @test expand((x + y)^2) == 2 * x * y + x^2 + y^2
+    end
+
+    @testset "Modeling" begin
+        @testset "Bottleneck" begin
+            @var x y z
+            f = [
+                (0.3 * x^2 + 0.5z + 0.3x + 1.2 * y^2 - 1.1)^2 +
+                (0.7 * (y - 0.5x)^2 + y + 1.2 * z^2 - 1)^2 - 0.3,
+            ]
+
+            I = let
+                x = variables(f)
+                n, m = length(x), length(f)
+                @unique_var y[1:n] v[1:m] w[1:m]
+                J = [differentiate(fᵢ, xᵢ) for fᵢ in f, xᵢ in x]
+                f′ = [subs(fᵢ, x => y) for fᵢ in f]
+                J′ = [subs(gᵢ, x => y) for gᵢ in J]
+                Nx = (x - y) - J' * v
+                Ny = (x - y) - J′' * w
+                System([f; f′; Nx; Ny], [x; y; v; w])
+            end
+            @test I isa System
+            @test size(I) == (8, 8)
+        end
+
+        @testset "Steiner" begin
+            @var x[1:2] a[1:5] c[1:6] y[1:2, 1:5]
+
+            #tangential conics
+            f = sum([a; 1] .* monomials(x, 2))
+            ∇ = differentiate(f, x)
+            #5 conics
+            g = sum(c .* monomials(x, 2))
+            ∇_2 = differentiate(g, x)
+            #the general system
+            #f_a_0 is tangent to g_b₀ at x₀
+            function Incidence(f, a₀, g, b₀, x₀)
+                fᵢ = f(x => x₀, a => a₀)
+                ∇ᵢ = [∇ᵢ(x => x₀, a => a₀) for ∇ᵢ in ∇]
+                Cᵢ = g(x => x₀, c => b₀)
+                ∇_Cᵢ = [∇ⱼ(x => x₀, c => b₀) for ∇ⱼ in ∇_2]
+
+                [fᵢ; Cᵢ; det([∇ᵢ ∇_Cᵢ])]
+            end
+            @var v[1:6, 1:5]
+            I = vcat(map(i -> Incidence(f, a, g, v[:, i], y[:, i]), 1:5)...)
+            F = System(I, [a; vec(y)], vec(v))
+            @test size(F) == (15, 15)
+        end
+
+        @testset "Reach plane curve" begin
+            @var x y
+            f = (x^3 - x * y^2 + y + 1)^2 * (x^2 + y^2 - 1) + y^2 - 5
+            ∇ = differentiate(f, [x; y]) # the gradient
+            H = differentiate(∇, [x; y]) # the Hessian
+
+            g = ∇ ⋅ ∇
+            v = [-∇[2]; ∇[1]]
+            h = v' * H * v
+            dg = differentiate(g, [x; y])
+            dh = differentiate(h, [x; y])
+
+            ∇σ = g .* dh - ((3 / 2) * h) .* dg
+
+            F = System([v ⋅ ∇σ; f], [x, y])
+            @test size(F) == (2, 2)
+        end
+    end
+
+    @testset "System" begin
+        @var x y a b
+        f = [(x + y)^3 + x^2 + x + 5y + 3a, 2 * x^2 + b]
+        F = System(f, [x, y], [b, a])
+
+        show_F = """
+        System
+         variables: x, y
+         parameters: b, a
+
+         3*a + x + 5*y + x^2 + (x + y)^3
+         b + 2*x^2"""
+        @test sprint(show, F) == show_F
+
+        T = ModelKit.type_level(F)
+        F2 = ModelKit.interpret(T)
+        @test F == F2
+        @test sprint(show, T) == "TSystem{2,2,2,#5474056377228356612}"
+    end
+
+    @testset "Homotopy" begin
+        @var x y z t
+
+        h = [x^2 + y + z + 2t,
+         4 * x^2 * z^2 * y + 4z - 6x * y * z^2]
+        H = Homotopy(h, [x, y, z], t)
+
+        @test sprint(show, H) == """
+        Homotopy in t
+         variables: x, y, z
+
+         2*t + y + z + x^2
+         4*z - 6*x*y*z^2 + 4*x^2*y*z^2"""
+
+
+        T = ModelKit.type_level(H)
+        H2 = ModelKit.interpret(T)
+        @test H == H2
+        @test sprint(show, T) == "THomotopy{2,3,0,#11547640937068801730}"
     end
 end
