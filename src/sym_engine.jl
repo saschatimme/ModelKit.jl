@@ -93,19 +93,6 @@ function args!(vec::VecBasic, ex::SE.Basic)
     vec
 end
 
-# function Base.getindex(s::VecBasic, n)
-#     result = SE.Basic()
-#     ccall(
-#         (:vecbasic_get, SE.libsymengine),
-#         Nothing,
-#         (Ptr{Cvoid}, UInt, Ref{SE.Basic}),
-#         s.ptr,
-#         UInt(n - 1),
-#         result,
-#     )
-#     result
-# end
-
 function getindex!(result::SE.Basic, s::VecBasic, n)
     ccall(
         (:vecbasic_get, SE.libsymengine),
