@@ -3,6 +3,7 @@ module ModelKit
 export @var,
     @unique_var,
     Variable,
+    Expression,
     variables,
     nvariables,
     subs,
@@ -15,33 +16,13 @@ export @var,
 
 import LinearAlgebra, GeneralizedGenerated, SymEngine
 
-## From the SymEngine source code
-##
-## Basic: holds a ptr to a symengine object. Faster, so is default type
-##
-## BasicType{Val{:XXX}}: types that can be use to control dispatch
-##
-## SymbolicType: is a type union of the two
-##
-## Basic(x::BasicType) gives a basic object;
-## BasicType(x::Basic) gives a BasicType object.
-##
+include("sym_engine.jl")
 
-# some useful aliases
-const Variable = SymEngine.BasicType{Val{:Symbol}}
-const Expression = SymEngine.SymbolicType
-
-# Fixes in SymEngine
-Base.promote_rule(::Type{Variable}, ::Type{SymEngine.Basic}) = SymEngine.Basic
-Base.promote_rule(::Type{SymEngine.Basic}, ::Type{Variable}) = SymEngine.Basic
-
-Base.hash(x::Variable, h::UInt) = hash(SymEngine.Basic(x), h)
-Base.hash(x::SymEngine.Basic, h::UInt) = Base.hash_uint(3h - hash(x))
 
 ## Variable construction
 
 function Variable(name::Union{Symbol,AbstractString})
-    SymEngine.BasicType(SymEngine.symbols(name))
+    SE.BasicType(SE.symbols(name))
 end
 
 Variable(name::Union{Symbol,AbstractString}, indices...) =
@@ -63,10 +44,10 @@ map_subscripts(indices) = join(INDEX_MAP[c] for c in string(indices))
 
 Base.convert(::Type{Variable}, v::Union{AbstractString, Symbol}) = Variable(v)
 Base.convert(::Type{Expr}, v::Variable) = Symbol(v)
-Symbol(v::Variable) = Symbol(SymEngine.toString(v))
+Symbol(v::Variable) = Symbol(SE.toString(v))
 # type piracy here
 Base.show(io::IO, v::Type{Variable}) = print(io, "Variable")
-Base.show(io::IO, v::Type{SymEngine.Basic}) = print(io, "Expression")
+Base.show(io::IO, v::Type{Expression}) = print(io, "Expression")
 
 
 """
@@ -174,7 +155,7 @@ Base.transpose(expr::Expression) = expr
 Base.broadcastable(v::Expression) = Ref(v)
 
 Base.isless(a::Variable, b::Variable) =
-    isless(SymEngine.toString(a), SymEngine.toString(b))
+    isless(SE.toString(a), SE.toString(b))
 
 """
     variables(expr::Expression, parameters = Variable[])
@@ -185,8 +166,8 @@ Obtain all variables used in the given expression.
 variables(op::Expression, params = Variable[]) = variables([op], params)
 function variables(exprs::AbstractVector{<:Expression}, params = Variable[])
     S = Set{Variable}()
-    for expr in exprs, v in SymEngine.free_symbols(expr)
-        push!(S, SymEngine.BasicType(v))
+    for expr in exprs, v in SE.free_symbols(expr)
+        push!(S, SE.BasicType(v))
     end
     setdiff!(S, params)
     sort!(collect(S))
@@ -236,7 +217,7 @@ function subs(
     new_expr
 end
 function _subs(expr::Expression, args...)
-    SymEngine.subs(expr, args...)
+    SE.subs(expr, args...)
 end
 function _subs(
     expr::Expression,
@@ -246,20 +227,20 @@ function _subs(
     error(ArgumentError("Substitution arguments don't have the same length."))
 
     list_of_tuples = map(tuple, first(sub_pairs), last(sub_pairs))
-    SymEngine.subs(expr, list_of_tuples...)
+    SE.subs(expr, list_of_tuples...)
 end
 
 # trait
 is_number_type(::Expression) = Val{false}()
-for T in SymEngine.number_types
+for T in SE.number_types
     @eval begin
-        is_number_type(::SymEngine.BasicType{Val{$(QuoteNode(T))}}) =
+        is_number_type(::SE.BasicType{Val{$(QuoteNode(T))}}) =
             Val{true}()
     end
 end
 
 unpack_number(e::Expression) = unpack_number(e, is_number_type(e))
-unpack_number(e::Expression, ::Val{true}) = SymEngine.N(e)
+unpack_number(e::Expression, ::Val{true}) = SE.N(e)
 unpack_number(e::Expression, ::Val{false}) = e
 
 """
@@ -288,7 +269,7 @@ function evaluate(
 )
     unpack_number.(subs(expr, pairs...))
 end
-(f::SymEngine.Basic)(
+(f::Expression)(
     pairs::Union{
         Pair{Variable,<:Number},
         Pair{<:AbstractArray{Variable},<:AbstractArray{<:Number}},
@@ -297,10 +278,10 @@ end
 
 
 function LinearAlgebra.det(A::Matrix{<:Expression})
-    LinearAlgebra.det(convert(SymEngine.CDenseMatrix, A))
+    LinearAlgebra.det(convert(SE.CDenseMatrix, A))
 end
 function LinearAlgebra.lu(A::Matrix{<:Expression})
-    LinearAlgebra.lu(convert(SymEngine.CDenseMatrix, A))
+    LinearAlgebra.lu(convert(SE.CDenseMatrix, A))
 end
 
 
@@ -312,10 +293,10 @@ end
 
 Compute the derivative of `expr` with respect to the given variable `var`.
 """
-differentiate(expr::Expression, var::Variable) = SymEngine.diff(expr, var)
-differentiate(expr::Expression, var::Variable, k) = SymEngine.diff(expr, var, k)
+differentiate(expr::Expression, var::Variable) = SE.diff(expr, var)
+differentiate(expr::Expression, var::Variable, k) = SE.diff(expr, var, k)
 function differentiate(expr::Expression, vars::AbstractVector{Variable})
-    [SymEngine.diff(expr, v) for v in vars]
+    [SE.diff(expr, v) for v in vars]
 end
 
 function differentiate(exprs::AbstractVector{<:Expression}, var::Variable)
@@ -399,7 +380,139 @@ julia> expand(f)
 2*x*y + x^2 + y^2
 ```
 """
-expand(e::Expression) = SymEngine.expand(e)
+expand(e::Expression) = SE.expand(e)
+
+
+degrees(expr::SE.Basic, vars::Vector{Variable}) =
+    degrees(SE.BasicType(expr), vars)
+function degrees(expr::SE.BasicType{Val{:Add}}, vars::Vector{Variable})
+    ops = UnsafeVecBasicIterator(args(SE.Basic(expr)))
+    D = zeros(Int32, length(vars), length(ops))
+
+    b1, b2 = SE.Basic(), SE.Basic()
+    mul_args, pow_args = VecBasic(), VecBasic()
+
+    for (j, op) in enumerate(ops)
+        op_cls = ModelKit.type(op)
+        if op_cls == :Mul
+            op_args = UnsafeVecBasicIterator(args!(mul_args, op), b1)
+            for arg in op_args
+                arg_cls = ModelKit.type(arg)
+                if arg_cls == :Symbol
+                    for (i, v) in enumerate(vars)
+                        if v == arg
+                            D[i, j] = 1
+                            break
+                        end
+                    end
+                elseif arg_cls == :Pow
+                    vec = args!(pow_args, arg)
+                    x = vec[1]
+                    for (i, v) in enumerate(vars)
+                        if x == v
+                            D[i, j] = convert(Int, vec[2])
+                            break
+                        end
+                    end
+                end
+            end
+        elseif op_cls == :Symbol
+            for (i, v) in enumerate(vars)
+                if v == op
+                    D[i, j] = 1
+                    break
+                end
+            end
+        elseif op_cls == :Pow
+            vec = args!(pow_args, op)
+            x = vec[1]
+            for (i, v) in enumerate(vars)
+                if x == v
+                    D[i, j] = convert(Int, vec[2])
+                    break
+                end
+            end
+        end
+    end
+    D
+end
+degrees(expr::SE.BasicType, vars::Vector{Variable}) =
+    zeros(Int32, length(vars), 0)
+
+
+to_dict(expr::SE.Basic, vars::Vector{Variable}) =
+    to_dict(SE.BasicType(expr), vars)
+function to_dict(expr::SE.BasicType{Val{:Add}}, vars::Vector{Variable})
+    ops = UnsafeVecBasicIterator(args(SE.Basic(expr)))
+    D = zeros(Int32, length(vars), length(ops))
+
+    b1, b2 = SE.Basic(), SE.Basic()
+    mul_args, pow_args = VecBasic(), VecBasic()
+
+    dict = Dict{Vector{Int},Expression}()
+
+    for op in ops
+        cls = ModelKit.type(op)
+        d = zeros(Int, length(vars))
+        coeff = Expression(1)
+        if cls == :Mul
+            op_args = UnsafeVecBasicIterator(args!(mul_args, op), b1)
+            for arg in op_args
+                arg_cls = ModelKit.type(arg)
+                is_coeff = true
+                if arg_cls == :Symbol
+                    for (i, v) in enumerate(vars)
+                        if v == arg
+                            d[i] = 1
+                            is_coeff = false
+                            break
+                        end
+                    end
+                elseif arg_cls == :Pow
+                    vec = args!(pow_args, arg)
+                    x = vec[1]
+                    for (i, v) in enumerate(vars)
+                        if x == v
+                            d[i] = convert(Int, vec[2])
+                            is_coeff = false
+                            break
+                        end
+                    end
+                end
+                if is_coeff
+                   coeff = coeff * arg
+                end
+            end
+        elseif cls == :Symbol
+            for (i, v) in enumerate(vars)
+                if v == arg
+                    d[i] = 1
+                    break
+                end
+            end
+        elseif cls == :Pow
+            vec = args!(pow_args, arg)
+            x = vec[1]
+            for (i, v) in enumerate(vars)
+                if x == v
+                    d[i] = convert(Int, vec[2])
+                    break
+                end
+            end
+        elseif cls ∈ SE.number_types
+            coeff = copy(op)
+        end
+        if haskey(dict, d)
+            dict[d] += coeff
+        else
+            dict[d] = coeff
+        end
+    end
+    dict
+end
+#
+# degrees(expr::SE.BasicType, vars::Vector{Variable}) =
+#     zeros(Int32, length(vars), 0)
 
 
 #########################
@@ -658,7 +771,7 @@ function to_type_level(
     }
 end
 function from_type_level(::Type{Tuple{E,V,P}}) where {E,V,P}
-    convert.(SymEngine.Basic, GeneralizedGenerated.from_type(E)),
+    convert.(Expression, GeneralizedGenerated.from_type(E)),
     Variable.(GeneralizedGenerated.from_type(V)),
     Variable.(GeneralizedGenerated.from_type(P))
 end
@@ -693,7 +806,7 @@ end
 
 interpret(TS::TSystem) = interpret(typeof(TS))
 function interpret(::Type{TSystem{TS,TE,V,P}}) where {TS,TE,V,P}
-    exprs = convert.(SymEngine.Basic, GeneralizedGenerated.from_type(TE))
+    exprs = convert.(Expression, GeneralizedGenerated.from_type(TE))
     vars = Variable.(GeneralizedGenerated.from_type(V))
     params =
         convert(Vector{Variable}, collect(GeneralizedGenerated.from_type(P)))
@@ -730,7 +843,7 @@ end
 
 interpret(TS::THomotopy) = interpret(typeof(TS))
 function interpret(::Type{THomotopy{TS,TE,V,T,P}}) where {TS,TE,V,T,P}
-    exprs = convert.(SymEngine.Basic, GeneralizedGenerated.from_type(TE))
+    exprs = convert.(Expression, GeneralizedGenerated.from_type(TE))
     vars = Variable.(GeneralizedGenerated.from_type(V))
     t = Variable(T)
     params =
