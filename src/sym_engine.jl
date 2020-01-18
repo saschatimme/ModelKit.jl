@@ -29,14 +29,21 @@ function Base.copy(x::SE.Basic)
     y
 end
 
+const REAL_NUMBER_TYPES = [:Integer, :RealDouble, :Rational, :RealMPFR]
+const COMPLEX_NUMBER_TYPES = [:Complex, :ComplexDouble, :ComplexMPC]
+const NUMBER_TYPES = [REAL_NUMBER_TYPES; COMPLEX_NUMBER_TYPES]
+
 const TYPE_IDS = let
     x = SE.symbols("x")
     types = [
         (x, :Symbol),
         (Expression(1), :Integer),
-        (Expression(5 + 3im), :Complex),
         (Expression(0.5), :RealDouble),
+        (Expression(2//3), :Rational),
+        (Expression(big(0.5)), :RealMPFR),
+        (Expression(5 + 3im), :Complex),
         (Expression(0.5 + 0.2im), :ComplexDouble),
+        (Expression(0.5 + big(0.2)*im), :ComplexMPC),
         (2x, :Mul),
         (x + 2, :Add),
         (x^2, :Pow),
@@ -52,7 +59,7 @@ function type(e::Expression)
         TYPE_IDS[id]
     else
         # add for futurue fast lookup
-        cls = SE.get_class_from_id(id)
+        cls = Symbol(SE.get_class_from_id(id))
         TYPE_IDS[id] = cls
         cls
     end
@@ -106,16 +113,16 @@ function getindex!(result::SE.Basic, s::VecBasic, n)
 end
 
 @inline function unsafe_getindex(s::VecBasic, n)
-    res = Ref(Ptr{Cvoid}(C_NULL))
+    res = SE.Basic()
     ccall(
         (:vecbasic_get, SE.libsymengine),
         Nothing,
-        (Ptr{Cvoid}, UInt, Ref{Ptr{Cvoid}}),
+        (Ptr{Cvoid}, UInt, Ref{SE.Basic}),
         s.ptr,
         UInt(n - 1),
         res,
     )
-    SE.Basic(res[])
+    res
 end
 @inline Base.getindex(s::VecBasic, n) = unsafe_getindex(s, n)
 
@@ -142,4 +149,5 @@ UnsafeVecBasicIterator(v::VecBasic) = UnsafeVecBasicIterator(v, v[1])
     i > length(s.v) && return nothing
     getindex!(s.x, s.v, i), i + 1
 end
+Base.getindex(iter::UnsafeVecBasicIterator, i) = getindex!(iter.x, iter.v, i)
 Base.eltype(::Type{UnsafeVecBasicIterator}) = SE.Basic
