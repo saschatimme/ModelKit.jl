@@ -90,3 +90,38 @@ function interpret(::Type{THomotopy{TS,TE,V,T,P}}) where {TS,TE,V,T,P}
 
     Homotopy(exprs, vars, t, params)
 end
+
+
+@inline sqr(x::Real) = x * x
+@inline function sqr(z::Complex)
+    x, y = reim(z)
+    Complex((x + y) * (x - y), (x + x) * y)
+end
+
+function _unrolled_pow_impl(n)
+    n == 0 && return :(one(x1))
+    n == 1 && return :x1
+    n == 2 && return :(sqr(x1))
+    n == 3 && return :(x1 * sqr(x1))
+    n == 4 && return :(sqr(sqr(x1)))
+    n == 5 && return :(x1 * sqr(sqr(x1)))
+
+    d = digits(n, base = 2)
+    exprs = map(2:length(d)) do i
+        :($(Symbol(:x, 1 << (i - 1))) = sqr($(Symbol(:x, 1 << (i - 2)))))
+    end
+    prods = Symbol[]
+    for (i, di) in enumerate(d)
+        if !iszero(di)
+            push!(prods, Symbol(:x, 1 << (i - 1)))
+        end
+    end
+    Expr(:block, exprs..., Expr(:call, :*, prods...))
+end
+
+@generated function unrolled_pow(x1::Number, ::Val{N}) where N
+    quote
+        Base.@_inline_meta
+        $(_unrolled_pow_impl(N))
+    end
+end
