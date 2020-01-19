@@ -1,90 +1,84 @@
-function to_type_level(
-    f::Vector{<:Expression},
-    var_order::AbstractVector{Variable},
-    param_order::AbstractVector{Variable} = Variable[],
-)
-    Tuple{
-        GeneralizedGenerated.NGG.to_typelist(convert.(Expr, f)),
-        GeneralizedGenerated.NGG.to_typelist(convert.(Expr, var_order)),
-        GeneralizedGenerated.NGG.to_typelist(convert.(Expr, param_order)),
-    }
-end
-function from_type_level(::Type{Tuple{E,V,P}}) where {E,V,P}
-    convert.(Expression, GeneralizedGenerated.from_type(E)),
-    Variable.(GeneralizedGenerated.from_type(V)),
-    Variable.(GeneralizedGenerated.from_type(P))
-end
+const TSYSTEM_TABLE = Dict{
+    UInt,
+    Vector{Tuple{Vector{Expression},Vector{Variable},Vector{Variable}}},
+}()
 
-struct TSystem{TS,TE,V,P} end
+struct TSystem{H,I} end
 
-type_level(sys::System) = typeof(TSystem(sys.expressions, sys.variables, sys.parameters))
 function TSystem(
-    exprs::Vector{<:Expression},
-    var_order::AbstractVector{Variable},
-    param_order::AbstractVector{Variable} = Variable[],
+    exprs::Vector{Expression},
+    var_order::Vector{Variable},
+    param_order::Vector{Variable} = Variable[],
 )
-    TS = Tuple{length(exprs),length(var_order),length(param_order)}
-    TE = GeneralizedGenerated.NGG.to_typelist(convert.(Expr, exprs))
-    V = GeneralizedGenerated.NGG.to_typelist(Symbol.(var_order))
-    P = GeneralizedGenerated.NGG.to_typelist(Symbol.(param_order))
-    TSystem{TS,TE,V,P}()
+    val = (exprs, var_order, param_order)
+    h = hash(val)
+    if haskey(TSYSTEM_TABLE, h)
+        # check that it is identical
+        for (i, vi) in enumerate(TSYSTEM_TABLE[h])
+            if vi == val
+                return TSystem{h,i}()
+            end
+        end
+        push!(TSYSTEM_TABLE[h], val)
+        return TSystem{h,length(TSYSTEM_TABLE[h])}()
+    else
+        TSYSTEM_TABLE[h] = [val]
+        return TSystem{h,1}()
+    end
 end
 
-Base.show(io::IO, ::Type{T}) where {T<:TSystem} = show_info(io, T)
 function Base.show(io::IO, TS::TSystem)
-    show_info(io, typeof(TS))
-    print(io, "()")
-end
-function show_info(io::IO, ::Type{TSystem{Tuple{n,N,m},TE,V,P}}) where {n,N,m,TE,V,P}
-    print(io, "TSystem{$n,$N,$m,#$(hash(TE))}")
+    print(io, "TSystem encoding: ")
+    show(io, interpret(TS))
 end
 
 interpret(TS::TSystem) = interpret(typeof(TS))
-function interpret(::Type{TSystem{TS,TE,V,P}}) where {TS,TE,V,P}
-    exprs = convert.(Expression, GeneralizedGenerated.from_type(TE))
-    vars = Variable.(GeneralizedGenerated.from_type(V))
-    params = convert(Vector{Variable}, collect(GeneralizedGenerated.from_type(P)))
-    System(exprs, vars, params)
-end
+interpret(::Type{TSystem{H,I}}) where {H,I} = System(TSYSTEM_TABLE[H][I]...)
 
+const THOMOTOPY_TABLE = Dict{
+    UInt,
+    Vector{Tuple{Vector{Expression},Vector{Variable},Variable,Vector{Variable}}},
+}()
 
-struct THomotopy{TS,TE,V,T,P} end
+struct THomotopy{H,I} end
 
-type_level(sys::Homotopy) =
-    typeof(THomotopy(sys.expressions, sys.variables, sys.t, sys.parameters))
 function THomotopy(
     exprs::Vector{<:Expression},
     var_order::AbstractVector{<:Variable},
     t::Variable,
     param_order::AbstractVector{<:Variable} = Variable[],
 )
-    TS = Tuple{length(exprs),length(var_order),length(param_order)}
-    TE = GeneralizedGenerated.NGG.to_typelist(convert.(Expr, exprs))
-    V = GeneralizedGenerated.NGG.to_typelist(Symbol.(var_order))
-    T = Symbol(t)
-    P = GeneralizedGenerated.NGG.to_typelist(Symbol.(param_order))
-    THomotopy{TS,TE,V,T,P}()
+    val = (exprs, var_order, t, param_order)
+    h = hash(val)
+    if haskey(THOMOTOPY_TABLE, h)
+    # check that it is identical
+        for (i, vi) in enumerate(THOMOTOPY_TABLE[h])
+            if vi == val
+                return THomotopy{h,i}()
+            end
+        end
+        push!(THOMOTOPY_TABLE[h], val)
+        return THomotopy{h,length(TSYSTEM_TABLE[h])}()
+    else
+        THOMOTOPY_TABLE[h] = [val]
+        return THomotopy{h,1}()
+    end
 end
 
-Base.show(io::IO, ::Type{T}) where {T<:THomotopy} = show_info(io, T)
-function Base.show(io::IO, TS::THomotopy)
-    show_info(io, typeof(TS))
-    print(io, "()")
-end
-function show_info(io::IO, ::Type{<:THomotopy{Tuple{n,N,m},TE}}) where {n,N,m,TE}
-    print(io, "THomotopy{$n,$N,$m,#$(hash(TE))}")
+function Base.show(io::IO, TH::THomotopy)
+    print(io, "THomotopy encoding: ")
+    show(io, interpret(TH))
 end
 
-interpret(TS::THomotopy) = interpret(typeof(TS))
-function interpret(::Type{THomotopy{TS,TE,V,T,P}}) where {TS,TE,V,T,P}
-    exprs = convert.(Expression, GeneralizedGenerated.from_type(TE))
-    vars = Variable.(GeneralizedGenerated.from_type(V))
-    t = Variable(T)
-    params = convert(Vector{Variable}, collect(GeneralizedGenerated.from_type(P)))
+interpret(TH::THomotopy) = interpret(typeof(TH))
+interpret(::Type{THomotopy{H,I}}) where {H,I} = Homotopy(THOMOTOPY_TABLE[H][I]...)
 
-    Homotopy(exprs, vars, t, params)
-end
+type_level(sys::System) = TSystem(sys.expressions, sys.variables, sys.parameters)
+type_level(sys::Homotopy) = THomotopy(sys.expressions, sys.variables, sys.t, sys.parameters)
 
+#############
+## Helpers ##
+#############
 
 @inline sqr(x::Real) = x * x
 @inline function sqr(z::Complex)
@@ -142,21 +136,26 @@ function type_to_call(t)
 end
 
 to_expr(var::Variable) = Symbol(SE.toString(var))
-function to_expr(ex::Expression, var_dict = Dict{UInt,Symbol}())
+function to_expr(ex::Expression, var_dict = Dict{Expression,Symbol}())
     t = type(ex)
     if t == :Symbol
-        h = hash(ex)
-        if haskey(var_dict, h)
-            return var_dict[h]
+        if !isnothing(var_dict) && haskey(var_dict, ex)
+            return var_dict[ex]
         else
             s = Symbol(SE.toString(ex))
-            var_dict[h] = s
+            if !isnothing(var_dict)
+                var_dict[copy(ex)] = s
+            end
             return s
         end
     elseif t == :Integer
         x = convert(BigInt, SE.BasicType{Val{:Integer}}(ex))
         if typemin(Int32) ≤ x ≤ typemax(Int32)
-            return :(Int32($x))
+            return convert(Int32, x)
+        elseif typemin(Int64) ≤ x ≤ typemax(Int64)
+            return convert(Int64, x)
+        elseif typemin(Int128) ≤ x ≤ typemax(Int128)
+            return convert(Int128, x)
         else
             return x
         end
@@ -164,18 +163,21 @@ function to_expr(ex::Expression, var_dict = Dict{UInt,Symbol}())
         return convert(Cdouble, SE.BasicType{Val{:RealDouble}}(ex))
     elseif t == :Pow
         vec = UnsafeVecBasicIterator(args(ex))
-        if type(vec[1]) == :Symbol
-            h = hash(ex)
-            if haskey(var_dict, h)
-                x = var_dict[h]
+        v = vec[1]
+        if type(v) == :Symbol
+            if !isnothing(var_dict) && haskey(var_dict, v)
+                x = var_dict[v]
             else
-                var_dict[h] = x = Symbol(SE.toString(ex))
+                x = Symbol(SE.toString(v))
+                if !isnothing(var_dict)
+                    var_dict[copy(v)] = x
+                end
             end
         else
-            x = to_expr(vec[1], var_dict)
+            x = to_expr(v, var_dict)
         end
         k = convert(Int, vec[2])
-        return :(unroll_pow($x, Val($k)))
+        return Expr(:call, :unrolled_pow, x, :(Val($k)))
     elseif t in NUMBER_TYPES || (t == :Constant)
         return SE.N(ex)
     else
@@ -192,4 +194,82 @@ function to_expr(ex::Expression, var_dict = Dict{UInt,Symbol}())
         end
         Expr(:call, type_to_call(t), exprs...)
     end
+end
+
+function cse(exprs...)
+    vec = convert(SE.CVecBasic, exprs...)
+    replacement_syms = VecBasic()
+    replacement_exprs = VecBasic()
+    reduced_exprs = VecBasic()
+    ccall(
+        (:basic_cse, SE.libsymengine),
+        Nothing,
+        (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}),
+        replacement_syms.ptr,
+        replacement_exprs.ptr,
+        reduced_exprs.ptr,
+        vec.ptr,
+    )
+    return replacement_syms, replacement_exprs, reduced_exprs
+end
+
+
+boundscheck_var_dict(F::System) =
+    boundscheck_var_dict(F.expressions, F.variables, F.parameters)
+boundscheck_var_dict(H::Homotopy) =
+    boundscheck_var_dict(H.expressions, H.variables, H.parameters, H.t)
+
+function boundscheck_var_dict(exprs, vars, params, t = nothing)
+    n = length(exprs)
+    m = length(vars)
+    l = length(params)
+    var_dict = Dict{Expression,Union{Symbol,Expr}}()
+    for i = 1:m
+        var_dict[Expression(vars[i])] = :(x[$i])
+    end
+    for i = 1:l
+        var_dict[Expression(params[i])] = :(p[$i])
+    end
+    if t !== nothing
+        var_dict[Expression(t)] = :(t)
+    end
+
+    checks = quote
+        @boundscheck checkbounds(u, 1:$n)
+        @boundscheck checkbounds(x, 1:$m)
+        @boundscheck p === nothing || checkbounds(p, 1:$l)
+    end
+
+    checks, var_dict
+end
+
+function codegen(
+    exprs::Vector{Expression},
+    var_dict = Dict{Expression,Symbol}();
+    output_name::Symbol = gensym(:u),
+)
+    lhs, rhs, out = ModelKit.cse(exprs)
+    exprs = map(lhs, rhs) do ai, bi
+        :($(ModelKit.to_expr(ai, var_dict)) = $(ModelKit.to_expr(bi, var_dict)))
+    end
+    for (i, ci) in enumerate(out)
+        push!(exprs, :($(output_name)[$i] = $(ModelKit.to_expr(ci, var_dict))))
+    end
+    Expr(:block, exprs...)
+end
+
+function _evaluate!_impl(::Type{T}) where {T<:Union{TSystem, THomotopy}}
+    I = interpret(T)
+    checks, var_dict = boundscheck_var_dict(I)
+    quote
+        $checks
+        @inbounds $(codegen(I.expressions, var_dict; output_name = :u))
+        u
+    end
+end
+@generated function evaluate!(u, ::T, x, p = nothing) where {T<:TSystem}
+    _evaluate!_impl(T)
+end
+@generated function evaluate!(u, ::T, x, t, p = nothing) where {T<:THomotopy}
+    _evaluate!_impl(T)
 end

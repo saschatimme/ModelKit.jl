@@ -39,11 +39,11 @@ const TYPE_IDS = let
         (x, :Symbol),
         (Expression(1), :Integer),
         (Expression(0.5), :RealDouble),
-        (Expression(2//3), :Rational),
+        (Expression(2 // 3), :Rational),
         (Expression(big(0.5)), :RealMPFR),
         (Expression(5 + 3im), :Complex),
         (Expression(0.5 + 0.2im), :ComplexDouble),
-        (Expression(0.5 + big(0.2)*im), :ComplexMPC),
+        (Expression(0.5 + big(0.2) * im), :ComplexMPC),
         (2x, :Mul),
         (x + 2, :Add),
         (x^2, :Pow),
@@ -72,7 +72,7 @@ function Base.convert(::Type{Int}, n::SE.BasicType{Val{:Integer}})
     ccall((:integer_get_si, SE.libsymengine), Int, (Ref{SE.Basic},), n)
 end
 
-mutable struct VecBasic
+mutable struct VecBasic <: AbstractVector{SE.Basic}
     ptr::Ptr{Cvoid}
 end
 
@@ -112,7 +112,8 @@ function getindex!(result::SE.Basic, s::VecBasic, n)
     result
 end
 
-@inline function unsafe_getindex(s::VecBasic, n)
+function Base.getindex(s::VecBasic, n)
+    @boundscheck checkindex(Bool, 1:length(s), n) || throw(BoundsError(s, n))
     res = SE.Basic()
     ccall(
         (:vecbasic_get, SE.libsymengine),
@@ -124,11 +125,13 @@ end
     )
     res
 end
-@inline Base.getindex(s::VecBasic, n) = unsafe_getindex(s, n)
 
-@inline function Base.length(s::VecBasic)
+
+function Base.length(s::VecBasic)
     ccall((:vecbasic_size, SE.libsymengine), UInt, (Ptr{Cvoid},), s.ptr)
 end
+Base.size(s::VecBasic) = (length(s),)
+
 @inline function Base.iterate(s::VecBasic, (i, n) = (1, 0))
     if n == 0
         n = length(s)

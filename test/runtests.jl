@@ -158,7 +158,7 @@ using Test
         T = ModelKit.type_level(F)
         F2 = ModelKit.interpret(T)
         @test F == F2
-        # @test sprint(show, T) == "TSystem{2,2,2,#5474056377228356612}"
+        @test sprint(show, T) == "TSystem encoding: $show_F"
     end
 
     @testset "Homotopy" begin
@@ -168,18 +168,19 @@ using Test
          4 * x^2 * z^2 * y + 4z - 6x * y * z^2]
         H = Homotopy(h, [x, y, z], t)
 
-        @test sprint(show, H) == """
+        show_H = """
         Homotopy in t
          variables: x, y, z
 
          2*t + y + z + x^2
          4*z - 6*x*y*z^2 + 4*x^2*y*z^2"""
 
+        @test sprint(show, H) == show_H
 
         T = ModelKit.type_level(H)
         H2 = ModelKit.interpret(T)
         @test H == H2
-        # @test sprint(show, T) == "THomotopy{2,3,0,#11547640937068801730}"
+        @test sprint(show, T) == "THomotopy encoding: $show_H"
     end
 
     @testset "Codegen helpers" begin

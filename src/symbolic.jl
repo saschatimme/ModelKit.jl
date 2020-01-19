@@ -21,7 +21,7 @@ const INDEX_MAP = Dict{Char,Char}(
 )
 map_subscripts(indices) = join(INDEX_MAP[c] for c in string(indices))
 
-Base.convert(::Type{Variable}, v::Union{AbstractString, Symbol}) = Variable(v)
+Base.convert(::Type{Variable}, v::Union{AbstractString,Symbol}) = Variable(v)
 Base.convert(::Type{Expr}, v::Variable) = Symbol(v)
 Symbol(v::Variable) = Symbol(SE.toString(v))
 # type piracy here
@@ -98,14 +98,14 @@ function buildvar(var; unique::Bool = false)
         var, :($(esc(var)) = Variable($"$varname"))
     else
         isa(var, Expr) || error("Expected $var to be a variable name")
-        Base.Meta.isexpr(var, :ref) ||
-        error("Expected $var to be of the form varname[idxset]")
-        (2 ≤ length(var.args)) ||
-        error("Expected $var to have at least one index set")
+        Base.Meta.isexpr(
+            var,
+            :ref,
+        ) || error("Expected $var to be of the form varname[idxset]")
+        (2 ≤ length(var.args)) || error("Expected $var to have at least one index set")
         varname = var.args[1]
         prefix = unique ? string(gensym(varname)) : string(varname)
-        varname,
-        :($(esc(varname)) = var_array($prefix, $(esc.(var.args[2:end])...)))
+        varname, :($(esc(varname)) = var_array($prefix, $(esc.(var.args[2:end])...)))
     end
 end
 
@@ -133,8 +133,7 @@ Base.conj(expr::Expression) = expr
 Base.transpose(expr::Expression) = expr
 Base.broadcastable(v::Expression) = Ref(v)
 
-Base.isless(a::Variable, b::Variable) =
-    isless(SE.toString(a), SE.toString(b))
+Base.isless(a::Variable, b::Variable) = isless(SE.toString(a), SE.toString(b))
 
 """
     variables(expr::Expression, parameters = Variable[])
@@ -202,8 +201,7 @@ function _subs(
     expr::Expression,
     sub_pairs::Pair{<:AbstractArray{Variable},<:AbstractArray{<:Number}},
 )
-    length(first(sub_pairs)) == length(last(sub_pairs)) ||
-    error(ArgumentError("Substitution arguments don't have the same length."))
+    length(first(sub_pairs)) == length(last(sub_pairs)) || error(ArgumentError("Substitution arguments don't have the same length."))
 
     list_of_tuples = map(tuple, first(sub_pairs), last(sub_pairs))
     SE.subs(expr, list_of_tuples...)
@@ -213,8 +211,7 @@ end
 is_number_type(::Expression) = Val{false}()
 for T in SE.number_types
     @eval begin
-        is_number_type(::SE.BasicType{Val{$(QuoteNode(T))}}) =
-            Val{true}()
+        is_number_type(::SE.BasicType{Val{$(QuoteNode(T))}}) = Val{true}()
     end
 end
 
@@ -248,12 +245,10 @@ function evaluate(
 )
     unpack_number.(subs(expr, pairs...))
 end
-(f::Expression)(
-    pairs::Union{
-        Pair{Variable,<:Number},
-        Pair{<:AbstractArray{Variable},<:AbstractArray{<:Number}},
-    }...,
-) = evaluate(f, pairs...)
+(f::Expression)(pairs::Union{
+    Pair{Variable,<:Number},
+    Pair{<:AbstractArray{Variable},<:AbstractArray{<:Number}},
+}...,) = evaluate(f, pairs...)
 
 
 function LinearAlgebra.det(A::Matrix{<:Expression})
@@ -284,10 +279,7 @@ end
 function differentiate(exprs::AbstractVector{<:Expression}, var::Variable, k)
     [differentiate(e, var, k) for e in exprs]
 end
-function differentiate(
-    exprs::AbstractVector{<:Expression},
-    vars::AbstractVector{Variable},
-)
+function differentiate(exprs::AbstractVector{<:Expression}, vars::AbstractVector{Variable})
     [differentiate(e, v) for e in exprs, v in vars]
 end
 
@@ -316,11 +308,7 @@ julia> monomials([x,y], 2; homogeneous = true)
  y ^ 2
  ```
 """
-function monomials(
-    vars::AbstractVector{Variable},
-    d::Integer;
-    homogeneous::Bool = false,
-)
+function monomials(vars::AbstractVector{Variable}, d::Integer; homogeneous::Bool = false)
     n = length(vars)
     if homogeneous
         pred = x -> sum(x) == d
@@ -362,8 +350,7 @@ julia> expand(f)
 expand(e::Expression) = SE.expand(e)
 
 
-degrees(expr::SE.Basic, vars::Vector{Variable}) =
-    degrees(SE.BasicType(expr), vars)
+degrees(expr::SE.Basic, vars::Vector{Variable}) = degrees(SE.BasicType(expr), vars)
 function degrees(expr::SE.BasicType{Val{:Add}}, vars::Vector{Variable})
     ops = UnsafeVecBasicIterator(args(SE.Basic(expr)))
     D = zeros(Int32, length(vars), length(ops))
@@ -415,12 +402,10 @@ function degrees(expr::SE.BasicType{Val{:Add}}, vars::Vector{Variable})
     end
     D
 end
-degrees(expr::SE.BasicType, vars::Vector{Variable}) =
-    zeros(Int32, length(vars), 0)
+degrees(expr::SE.BasicType, vars::Vector{Variable}) = zeros(Int32, length(vars), 0)
 
 
-to_dict(expr::SE.Basic, vars::Vector{Variable}) =
-    to_dict(SE.BasicType(expr), vars)
+to_dict(expr::SE.Basic, vars::Vector{Variable}) = to_dict(SE.BasicType(expr), vars)
 function to_dict(expr::SE.BasicType{Val{:Add}}, vars::Vector{Variable})
     ops = UnsafeVecBasicIterator(args(SE.Basic(expr)))
     D = zeros(Int32, length(vars), length(ops))
@@ -459,7 +444,7 @@ function to_dict(expr::SE.BasicType{Val{:Add}}, vars::Vector{Variable})
                     end
                 end
                 if is_coeff
-                   coeff = coeff * arg
+                    coeff = coeff * arg
                 end
             end
         elseif cls == :Symbol
@@ -502,10 +487,8 @@ end
 function check_vars_params(f, vars, params)
     vars_params = params === nothing ? vars : [vars; params]
     Δ = setdiff(variables(f), vars_params)
-    isempty(Δ) || throw(ArgumentError(
-        "Not all variables or parameters of the system are given. Missing: " *
-        join(Δ, ", "),
-    ))
+    isempty(Δ) || throw(ArgumentError("Not all variables or parameters of the system are given. Missing: " *
+                                      join(Δ, ", "),))
     nothing
 end
 
@@ -539,8 +522,6 @@ struct System
     expressions::Vector{Expression}
     variables::Vector{Variable}
     parameters::Vector{Variable}
-    # automatically computed
-    jacobian::Matrix{Expression}
 
     function System(
         exprs::Vector{Expression},
@@ -548,8 +529,7 @@ struct System
         params::Vector{Variable},
     )
         check_vars_params(exprs, vars, params)
-        jacobian = [differentiate(e, v) for e in exprs, v in vars]
-        new(exprs, vars, params, jacobian)
+        new(exprs, vars, params)
     end
 end
 
@@ -560,6 +540,9 @@ function System(
 )
     System(convert(Vector{Expression}, exprs), variables, parameters)
 end
+
+Base.hash(S::System, u::UInt64) =
+    hash(S.expressions, hash(S.variables, hash(S.parameters, u)))
 
 function Base.show(io::IO, F::System)
     if !get(io, :compact, false)
@@ -583,19 +566,12 @@ function Base.show(io::IO, F::System)
     end
 end
 
-evaluate(F::System, x::AbstractVector) =
-    evaluate(F.expressions, F.variables => x)
+evaluate(F::System, x::AbstractVector) = evaluate(F.expressions, F.variables => x)
 function evaluate(F::System, x::AbstractVector, p::AbstractVector)
     evaluate(F.expressions, F.variables => x, F.parameters => p)
 end
 (F::System)(x::AbstractVector) = evaluate(F, x)
 (F::System)(x::AbstractVector, p::AbstractVector) = evaluate(F, x, p)
-
-jacobian(F::System, x::AbstractVector) = evaluate(F.jacobian, F.variables => x)
-function jacobian(F::System, x::AbstractVector, p::AbstractVector)
-    evaluate(F.jacobian, F.variables => x, F.parameters => p)
-end
-
 
 function Base.:(==)(F::System, G::System)
     F.expressions == G.expressions &&
@@ -651,9 +627,6 @@ struct Homotopy
     variables::Vector{Variable}
     t::Variable
     parameters::Vector{Variable}
-    # automatically computed
-    jacobian::Matrix{Expression}
-    dt::Vector{Expression}
 
     function Homotopy(
         exprs::Vector{Expression},
@@ -662,9 +635,7 @@ struct Homotopy
         params::Vector{Variable},
     )
         check_vars_params(exprs, [vars; t], params)
-        jacobian = [differentiate(e, v) for e in exprs, v in vars]
-        dt = [differentiate(e, t) for e in exprs]
-        new(exprs, vars, t, params, jacobian, dt)
+        new(exprs, vars, t, params)
     end
 end
 
@@ -706,20 +677,6 @@ function evaluate(H::Homotopy, x::AbstractVector, t, p::AbstractVector)
 end
 (H::Homotopy)(x::AbstractVector, t) = evaluate(H, x, t)
 (H::Homotopy)(x::AbstractVector, t, p::AbstractVector) = evaluate(H, x, t, p)
-
-function jacobian(H::Homotopy, x::AbstractVector, t)
-    evaluate(H.jacobian, H.variables => x, H.t => t)
-end
-function jacobian(H::Homotopy, x::AbstractVector, t, p::AbstractVector)
-    evaluate(H.jacobian, H.variables => x, H.t => t, H.parameters => p)
-end
-
-function dt(H::Homotopy, x::AbstractVector, t)
-    evaluate(H.dt, H.variables => x, H.t => t)
-end
-function dt(H::Homotopy, x::AbstractVector, t, p::AbstractVector)
-    evaluate(H.dt, H.variables => x, H.t => t, H.parameters => p)
-end
 
 function Base.:(==)(H::Homotopy, G::Homotopy)
     H.expressions == G.expressions &&
