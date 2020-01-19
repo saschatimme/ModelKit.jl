@@ -546,10 +546,10 @@ Base.hash(S::System, u::UInt64) =
 
 function Base.show(io::IO, F::System)
     if !get(io, :compact, false)
-        println(io, "System")
-        print(io, " variables: ", join(F.variables, ", "))
+        println(io, "System of length $(length(F.expressions))")
+        print(io, " $(length(F.variables)) variables: ", join(F.variables, ", "))
         if !isempty(F.parameters)
-            print(io, "\n parameters: ", join(F.parameters, ", "))
+            print(io, "\n $(length(F.parameters)) parameters: ", join(F.parameters, ", "))
         end
         print(io, "\n\n")
         for i = 1:length(F)
@@ -650,10 +650,10 @@ end
 
 function Base.show(io::IO, H::Homotopy)
     if !get(io, :compact, false)
-        println(io, "Homotopy in ", H.t)
-        print(io, " variables: ", join(H.variables, ", "))
+        println(io, "Homotopy in ", H.t, " of length ", length(H.expressions))
+        print(io, " $(length(H.variables)) variables: ", join(H.variables, ", "))
         if !isempty(H.parameters)
-            print(io, "\n parameters: ", join(H.parameters, ", "))
+            print(io, "\n $(length(H.parameters)) parameters: ", join(H.parameters, ", "))
         end
         print(io, "\n\n")
         for i = 1:length(H)

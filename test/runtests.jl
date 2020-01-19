@@ -147,9 +147,9 @@ using Test
         F = System(f, [x, y], [b, a])
 
         show_F = """
-        System
-         variables: x, y
-         parameters: b, a
+        System of length 2
+         2 variables: x, y
+         2 parameters: b, a
 
          3*a + x + 5*y + x^2 + (x + y)^3
          b + 2*x^2"""
@@ -169,8 +169,8 @@ using Test
         H = Homotopy(h, [x, y, z], t)
 
         show_H = """
-        Homotopy in t
-         variables: x, y, z
+        Homotopy in t of length 2
+         3 variables: x, y, z
 
          2*t + y + z + x^2
          4*z - 6*x*y*z^2 + 4*x^2*y*z^2"""
