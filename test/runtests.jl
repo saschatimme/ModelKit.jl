@@ -159,6 +159,7 @@ using Test
         F2 = ModelKit.interpret(T)
         @test F == F2
         @test sprint(show, T) == "TSystem encoding: $show_F"
+        @test size(T) == size(F) == (2, 2)
     end
 
     @testset "Homotopy" begin
@@ -181,6 +182,7 @@ using Test
         H2 = ModelKit.interpret(T)
         @test H == H2
         @test sprint(show, T) == "THomotopy encoding: $show_H"
+        @test size(T) == size(H) == (2, 3)
     end
 
     @testset "Codegen helpers" begin

@@ -35,6 +35,9 @@ end
 interpret(TS::TSystem) = interpret(typeof(TS))
 interpret(::Type{TSystem{H,I}}) where {H,I} = System(TSYSTEM_TABLE[H][I]...)
 
+Base.size(TS::TSystem) = size(interpret(TS))
+
+
 const THOMOTOPY_TABLE = Dict{
     UInt,
     Vector{Tuple{Vector{Expression},Vector{Variable},Variable,Vector{Variable}}},
@@ -72,6 +75,8 @@ end
 
 interpret(TH::THomotopy) = interpret(typeof(TH))
 interpret(::Type{THomotopy{H,I}}) where {H,I} = Homotopy(THOMOTOPY_TABLE[H][I]...)
+
+Base.size(TH::THomotopy) = size(interpret(TH))
 
 type_level(sys::System) = TSystem(sys.expressions, sys.variables, sys.parameters)
 type_level(sys::Homotopy) = THomotopy(sys.expressions, sys.variables, sys.t, sys.parameters)
