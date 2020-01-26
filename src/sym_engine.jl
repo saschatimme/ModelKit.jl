@@ -76,6 +76,24 @@ mutable struct VecBasic <: AbstractVector{SE.Basic}
     ptr::Ptr{Cvoid}
 end
 
+
+## Fast getindex
+# m = unsafe_load(Ptr{Ptr{Ptr{Cvoid}}}(f.ptr))
+#
+# w = SE.Basic();
+# function unsafe_get!(w, m, i)
+#     w.ptr = unsafe_load(m, i)
+#     w
+# end
+
+
+# struct SBasic
+#     m::Ptr{Cvoid}
+# end
+# function unsafe_get(m, i)
+#     SBasic(unsafe_load(m, i))
+# end
+
 function VecBasic()
     z = VecBasic(ccall((:vecbasic_new, SE.libsymengine), Ptr{Cvoid}, ()))
     finalizer(VecBasic_free, z)
