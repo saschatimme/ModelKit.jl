@@ -475,6 +475,11 @@ function to_dict(expr::SE.BasicType{Val{:Add}}, vars::Vector{Variable})
     dict
 end
 
+function cse(ex::Vector{Expression})
+    a, b, c = SE.cse(ex)
+    Expression[ci for ci in c], Dict{Expression,Expression}(zip(a, b))
+end
+
 #########################
 ## System and Homotopy ##
 #########################
