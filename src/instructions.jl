@@ -111,10 +111,10 @@ function Base.diff(
     end
     dlist = diff!(list, length(vars), seed)
 
-    J = Matrix{Union{Nothing,Symbol}}(undef, length(f), length(vars))
+    J = Matrix{Union{Nothing,Symbol,Number}}(undef, length(f), length(vars))
     for (j, v) in enumerate(vars), (i, fi) in enumerate(f)
         if haskey(seed, (fi, j))
-            J[i, j] = seed[(fi, j)]::Symbol
+            J[i, j] = seed[(fi, j)]
         else
             J[i, j] = nothing
         end
@@ -145,7 +145,7 @@ function diff!(list::InstructionList, N::Int, diff_map)
                         end
                         if !instr_added
                             if exp == 2
-                                push!(v, id => (:*, arg1, arg1))
+                                push!(v, id => (:^, arg1, 2))
                             else
                                 push!(v, id => (:*, p1, arg1))
                             end

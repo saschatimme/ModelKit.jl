@@ -86,6 +86,14 @@ type_level(sys::System) =
 type_level(sys::Homotopy) =
     THomotopy(sys.expressions, sys.variables, sys.t, sys.parameters)
 
+function to_smallest_type(A::AbstractArray)
+    T = typeof(first(A))
+    for a in A
+        T = promote_type(T, typeof(a))
+    end
+    convert.(T, A)
+end
+
 boundscheck_var_map(F::System; kwargs...) =
     boundscheck_var_map(F.expressions, F.variables, F.parameters; kwargs...)
 boundscheck_var_map(H::Homotopy; kwargs...) =
@@ -161,6 +169,10 @@ end
     _evaluate!_impl(T)
 end
 
+function evaluate(T::TSystem, x, p = nothing)
+    to_smallest_type(evaluate!(Vector{Any}(undef, size(T,1)), T, x, p))
+end
+
 function _jacobian!_impl(::Type{T}) where {T<:Union{TSystem,THomotopy}}
     I = interpret(T)
     checks, var_map = boundscheck_var_map(I; jacobian = true)
@@ -171,15 +183,22 @@ function _jacobian!_impl(::Type{T}) where {T<:Union{TSystem,THomotopy}}
         dlist, J = diff(list, vars, ids)
 
         assignements = Dict{Symbol,Expr}()
+
+        U_constants = Expr[]
         for j = 1:size(J, 2), i = 1:size(J, 1)
-            if J[i, j] !== nothing
+            if J[i, j] isa Symbol
                 push!(assignements, J[i, j] => :(U[$i, $j] = $(J[i, j])))
+            elseif J[i,j] isa Number
+                push!(U_constants, :(U[$i, $j] = $(J[i, j])))
             end
         end
-        to_expr(dlist, var_map, assignements)
+        expr = to_expr(dlist, var_map, assignements)
+        append!(expr.args, U_constants)
+        expr
     end
     quote
         $checks
+        U .= zero(eltype(x))
         @inbounds $slp
         U
     end
@@ -189,4 +208,72 @@ end
 end
 @generated function jacobian!(U, ::T, x, t, p = nothing) where {T<:THomotopy}
     _jacobian!_impl(T)
+end
+
+function jacobian(T::TSystem, x, p = nothing)
+    n, m = size(T)
+    U = Matrix{Any}(undef, n, m)
+    to_smallest_type(jacobian!(U, T, x, p))
+end
+function jacobian(T::THomotopy, x, t, p = nothing)
+    n, m = size(T)
+    U = Vector{Any}(undef, n, m)
+    to_smallest_type(jacobian!(U, T, x, t, p))
+end
+
+
+function _evaluate_and_jacobian!_impl(::Type{T}) where {T<:Union{TSystem,THomotopy}}
+    I = interpret(T)
+    checks, var_map = boundscheck_var_map(I; jacobian = true)
+
+    slp = let
+        list, ids = instruction_list(I.expressions)
+        vars = Symbol.(I.variables)
+        dlist, J = diff(list, vars, ids)
+
+        assignements = Dict{Symbol,Expr}()
+        for (i, id) in enumerate(ids)
+            push!(assignements, id => :(u[$i] = $id))
+        end
+
+        U_constants = Expr[]
+        for j = 1:size(J, 2), i = 1:size(J, 1)
+            if J[i, j] isa Symbol
+                push!(assignements, J[i, j] => :(U[$i, $j] = $(J[i, j])))
+            elseif J[i,j] isa Number
+                push!(U_constants, :(U[$i, $j] = $(J[i, j])))
+            end
+        end
+        expr = to_expr(dlist, var_map, assignements)
+        append!(expr.args, U_constants)
+        expr
+    end
+    quote
+        $checks
+        U .= zero(eltype(x))
+        @inbounds $slp
+        nothing
+    end
+end
+
+@generated function evaluate_and_jacobian!(u, U, ::T, x, p = nothing) where {T<:TSystem}
+    _evaluate_and_jacobian!_impl(T)
+end
+@generated function evaluate_and_jacobian!(u, U, ::T, x, t, p = nothing) where {T<:THomotopy}
+    _evaluate_and_jacobian!_impl(T)
+end
+
+function evaluate_jacobian(T::TSystem, x, p = nothing)
+    n, m = size(T)
+    u = Vector{Any}(undef, n)
+    U = Matrix{Any}(undef, n, m)
+    evaluate_and_jacobian!(u, U, T, x, p)
+    to_smallest_type(u), to_smallest_type(U)
+end
+function evaluate_jacobian(T::THomotopy, x, t, p = nothing)
+    n, m = size(T)
+    u = Vector{Any}(undef, n)
+    U = Matrix{Any}(undef, n, m)
+    evaluate_and_jacobian!(u, U, T, x, t, p)
+    to_smallest_type(u), to_smallest_type(U)
 end
