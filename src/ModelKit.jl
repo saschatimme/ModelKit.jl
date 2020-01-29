@@ -19,7 +19,7 @@ using OrderedCollections: OrderedDict
 
 include("sym_engine.jl")
 include("symbolic.jl")
-include("ad.jl")
+include("instructions.jl")
 include("codegen.jl")
 
 end # module

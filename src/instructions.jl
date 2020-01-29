@@ -4,8 +4,31 @@ struct InstructionList
     n::Base.RefValue{Int}
 end
 
-function InstructionList(; var::Symbol = :ι, n::Base.RefValue{Int} = Ref(0))
-    InstructionList(Pair{Symbol,<:Any}[], var, n)
+function InstructionList(; var::Symbol = :_ι, n::Base.RefValue{Int} = Ref(0))
+    InstructionList(Tuple{Symbol,Tuple{Symbol,Any,Any}}[], var, n)
+end
+
+function instruction_list(
+    exprs::Vector{Expression};
+    subexpressions::Dict{Expression,Expression} = Dict{Expression,Expression}(),
+    perform_cse::Bool = true,
+)
+    v = InstructionList()
+    PSE = Set{Symbol}()
+    if perform_cse
+        exprs, CSE = cse(exprs)
+        merge!(CSE, subexpressions)
+    else
+        CSE = subexpressions
+    end
+    v, map(ex -> flat_expr!(v, ex, CSE, PSE), exprs)
+end
+
+Base.length(v::InstructionList) = v.n[]
+function Base.show(io::IO, v::InstructionList)
+    for (id, arg) in v.instructions
+        println(io, :($id = $(Expr(:call, arg...))))
+    end
 end
 
 function Base.push!(v::InstructionList, x)
@@ -17,36 +40,6 @@ function Base.push!(v::InstructionList, x::Pair{Symbol,<:Tuple{Symbol,Any,Any}})
     push!(v.instructions, (first(x), last(x)))
     first(x)
 end
-
-Base.length(v::InstructionList) = v.n[]
-
-function Base.show(io::IO, v::InstructionList)
-    for (id, arg) in v.instructions
-        println(io, :($id = $(Expr(:call, arg...))))
-    end
-end
-
-
-function InstructionList(exprs::Vector{Expression}; perform_cse = true)
-    v = InstructionList()
-    PSE = Set{Symbol}()
-    if perform_cse
-        exprs, CSE = cse(exprs)
-    else
-        CSE = Dict{Expression,Expression}()
-    end
-    v, map(ex -> flat_expr!(v, ex, CSE, PSE), exprs)
-end
-
-function InstructionList(
-    ex::Expression,
-    common_subexpression = Dict{Expression,Expression}(),
-)
-    v = InstructionList()
-    flat_expr!(v, ex, common_subexpression)
-    v
-end
-
 
 function flat_expr!(
     v,
@@ -306,6 +299,7 @@ end
 function to_expr(
     list::InstructionList,
     var_map = Dict{Symbol,Union{Expr,Symbol}}(),
+    assignements = Dict{Symbol,Expr}(),
 )
     exprs = Expr[]
     for (id, (op, arg1, arg2)) in list.instructions
@@ -313,7 +307,10 @@ function to_expr(
             x::Symbol = arg1
             k::Int = arg2
             if k < 0
-                push!(exprs, :($id = inv($(unroll_pow(get(var_map, x, x), -k)))))
+                push!(
+                    exprs,
+                    :($id = inv($(unroll_pow(get(var_map, x, x), -k)))),
+                )
             else
                 push!(exprs, :($id = $(unroll_pow(get(var_map, x, x), k))))
             end
@@ -321,6 +318,10 @@ function to_expr(
             a = get(var_map, arg1, arg1)
             b = get(var_map, arg2, arg2)
             push!(exprs, :($id = $(Expr(:call, op, a, b))))
+        end
+
+        if haskey(assignements, id)
+            push!(exprs, assignements[id])
         end
     end
     Expr(:block, exprs...)

@@ -40,7 +40,9 @@ Base.size(TS::TSystem) = size(interpret(TS))
 
 const THOMOTOPY_TABLE = Dict{
     UInt,
-    Vector{Tuple{Vector{Expression},Vector{Variable},Variable,Vector{Variable}}},
+    Vector{
+        Tuple{Vector{Expression},Vector{Variable},Variable,Vector{Variable}},
+    },
 }()
 
 struct THomotopy{H,I} end
@@ -74,202 +76,117 @@ function Base.show(io::IO, TH::THomotopy)
 end
 
 interpret(TH::THomotopy) = interpret(typeof(TH))
-interpret(::Type{THomotopy{H,I}}) where {H,I} = Homotopy(THOMOTOPY_TABLE[H][I]...)
+interpret(::Type{THomotopy{H,I}}) where {H,I} =
+    Homotopy(THOMOTOPY_TABLE[H][I]...)
 
 Base.size(TH::THomotopy) = size(interpret(TH))
 
-type_level(sys::System) = TSystem(sys.expressions, sys.variables, sys.parameters)
-type_level(sys::Homotopy) = THomotopy(sys.expressions, sys.variables, sys.t, sys.parameters)
+type_level(sys::System) =
+    TSystem(sys.expressions, sys.variables, sys.parameters)
+type_level(sys::Homotopy) =
+    THomotopy(sys.expressions, sys.variables, sys.t, sys.parameters)
 
-#############
-## Helpers ##
-#############
+boundscheck_var_map(F::System; kwargs...) =
+    boundscheck_var_map(F.expressions, F.variables, F.parameters; kwargs...)
+boundscheck_var_map(H::Homotopy; kwargs...) =
+    boundscheck_var_map(H.expressions, H.variables, H.parameters, H.t; kwargs...)
 
-
-function _unrolled_pow_impl(n)
-    n == 0 && return :(one(x1))
-    n == 1 && return :x1
-    n == 2 && return :(sqr(x1))
-    n == 3 && return :(x1 * sqr(x1))
-    n == 4 && return :(sqr(sqr(x1)))
-    n == 5 && return :(x1 * sqr(sqr(x1)))
-
-    d = digits(n, base = 2)
-    exprs = map(2:length(d)) do i
-        :($(Symbol(:x, 1 << (i - 1))) = sqr($(Symbol(:x, 1 << (i - 2)))))
-    end
-    prods = Symbol[]
-    for (i, di) in enumerate(d)
-        if !iszero(di)
-            push!(prods, Symbol(:x, 1 << (i - 1)))
-        end
-    end
-    Expr(:block, exprs..., Expr(:call, :*, prods...))
-end
-
-@generated function unrolled_pow(x1::Number, ::Val{N}) where {N}
-    quote
-        Base.@_inline_meta
-        $(_unrolled_pow_impl(N))
-    end
-end
-
-## Map symengine classes to function names
-const TYPE_CALL_DICT = Dict(
-    :Add => :+,
-    :Sub => :-,
-    :Mul => :*,
-    :Div => :/,
-    :Pow => :^,
-    :re => :real,
-    :im => :imag,
+function boundscheck_var_map(
+    exprs,
+    vars,
+    params,
+    t = nothing;
+    jacobian::Bool = false,
 )
-
-function type_to_call(t)
-    if haskey(TYPE_CALL_DICT, t)
-        TYPE_CALL_DICT[t]
-    else
-        v = Symbol(lowercase(string(t)))
-        TYPE_CALL_DICT[t] = v
-        v
-    end
-end
-
-to_expr(var::Variable) = Symbol(SE.toString(var))
-function to_expr(ex::Expression, var_dict = Dict{Expression,Symbol}())
-    t = type(ex)
-    if t == :Symbol
-        if !isnothing(var_dict) && haskey(var_dict, ex)
-            return var_dict[ex]
-        else
-            s = Symbol(SE.toString(ex))
-            if !isnothing(var_dict)
-                var_dict[copy(ex)] = s
-            end
-            return s
-        end
-    elseif t == :Integer
-        x = convert(BigInt, SE.BasicType{Val{:Integer}}(ex))
-        if typemin(Int32) ≤ x ≤ typemax(Int32)
-            return convert(Int32, x)
-        elseif typemin(Int64) ≤ x ≤ typemax(Int64)
-            return convert(Int64, x)
-        elseif typemin(Int128) ≤ x ≤ typemax(Int128)
-            return convert(Int128, x)
-        else
-            return x
-        end
-    elseif t == :RealDouble
-        return convert(Cdouble, SE.BasicType{Val{:RealDouble}}(ex))
-    elseif t == :Pow
-        vec = UnsafeVecBasicIterator(args(ex))
-        v = vec[1]
-        if type(v) == :Symbol
-            if !isnothing(var_dict) && haskey(var_dict, v)
-                x = var_dict[v]
-            else
-                x = Symbol(SE.toString(v))
-                if !isnothing(var_dict)
-                    var_dict[copy(v)] = x
-                end
-            end
-        else
-            x = to_expr(v, var_dict)
-        end
-        k = convert(Int, vec[2])
-        return Expr(:call, :unrolled_pow, x, :(Val($k)))
-    elseif t in NUMBER_TYPES || (t == :Constant)
-        return SE.N(ex)
-    else
-        vec = UnsafeVecBasicIterator(args(ex))
-        exprs = map(v -> to_expr(v, var_dict), vec)
-        n = length(exprs)
-        if n ≥ 32 && (t == :Add || t == :Mul)
-            while n ≥ 32
-                exprs = map(1:31:n) do i
-                    Expr(:call, type_to_call(t), exprs[i:min(n, i + 30)]...)
-                end
-                n = length(exprs)
-            end
-        end
-        Expr(:call, type_to_call(t), exprs...)
-    end
-end
-
-function cse(exprs...)
-    vec = convert(SE.CVecBasic, exprs...)
-    replacement_syms = VecBasic()
-    replacement_exprs = VecBasic()
-    reduced_exprs = VecBasic()
-    ccall(
-        (:basic_cse, SE.libsymengine),
-        Nothing,
-        (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}),
-        replacement_syms.ptr,
-        replacement_exprs.ptr,
-        reduced_exprs.ptr,
-        vec.ptr,
-    )
-    return replacement_syms, replacement_exprs, reduced_exprs
-end
-
-
-boundscheck_var_dict(F::System) =
-    boundscheck_var_dict(F.expressions, F.variables, F.parameters)
-boundscheck_var_dict(H::Homotopy) =
-    boundscheck_var_dict(H.expressions, H.variables, H.parameters, H.t)
-
-function boundscheck_var_dict(exprs, vars, params, t = nothing)
     n = length(exprs)
     m = length(vars)
     l = length(params)
-    var_dict = Dict{Expression,Union{Symbol,Expr}}()
+    var_map = Dict{Symbol,Union{Symbol,Expr}}()
     for i = 1:m
-        var_dict[Expression(vars[i])] = :(x[$i])
+        var_map[Symbol(vars[i])] = :(x[$i])
     end
     for i = 1:l
-        var_dict[Expression(params[i])] = :(p[$i])
+        var_map[Symbol(params[i])] = :(p[$i])
     end
     if t !== nothing
-        var_dict[Expression(t)] = :(t)
+        var_map[Symbol(t)] = :(t)
     end
 
-    checks = quote
-        @boundscheck checkbounds(u, 1:$n)
-        @boundscheck checkbounds(x, 1:$m)
-        @boundscheck p === nothing || checkbounds(p, 1:$l)
+    checks = Expr[]
+    if jacobian
+        push!(checks, :(@boundscheck checkbounds(U, 1:$n, 1:$m)))
     end
+    push!(checks, :(@boundscheck checkbounds(x, 1:$m)))
+    push!(checks, :(@boundscheck p === nothing || checkbounds(p, 1:$l)))
 
-    checks, var_dict
+    Expr(:block, checks...), var_map
 end
 
 function codegen(
     exprs::Vector{Expression},
-    var_dict = Dict{Expression,Symbol}();
+    var_map;
     output_name::Symbol = gensym(:u),
 )
-    lhs, rhs, out = ModelKit.cse(exprs)
-    exprs = map(lhs, rhs) do ai, bi
-        :($(ModelKit.to_expr(ai, var_dict)) = $(ModelKit.to_expr(bi, var_dict)))
+    list, ids = instruction_list(exprs)
+    assignements = Dict{Symbol,Expr}()
+    for (i, id) in enumerate(ids)
+        push!(assignements, id => :($(output_name)[$i] = $id))
     end
-    for (i, ci) in enumerate(out)
-        push!(exprs, :($(output_name)[$i] = $(ModelKit.to_expr(ci, var_dict))))
-    end
-    Expr(:block, exprs...)
+    to_expr(list, var_map, assignements)
 end
 
-function _evaluate!_impl(::Type{T}) where {T<:Union{TSystem, THomotopy}}
+function _evaluate!_impl(::Type{T}) where {T<:Union{TSystem,THomotopy}}
     I = interpret(T)
-    checks, var_dict = boundscheck_var_dict(I)
+    checks, var_map = boundscheck_var_map(I)
+    slp = let
+        list, ids = instruction_list(I.expressions)
+        assignements = Dict{Symbol,Expr}()
+        for (i, id) in enumerate(ids)
+            push!(assignements, id => :(u[$i] = $id))
+        end
+        to_expr(list, var_map, assignements)
+    end
+
     quote
         $checks
-        @inbounds $(codegen(I.expressions, var_dict; output_name = :u))
+        @inbounds $slp
         u
     end
 end
+
 @generated function evaluate!(u, ::T, x, p = nothing) where {T<:TSystem}
     _evaluate!_impl(T)
 end
 @generated function evaluate!(u, ::T, x, t, p = nothing) where {T<:THomotopy}
     _evaluate!_impl(T)
+end
+
+function _jacobian!_impl(::Type{T}) where {T<:Union{TSystem,THomotopy}}
+    I = interpret(T)
+    checks, var_map = boundscheck_var_map(I; jacobian = true)
+
+    slp = let
+        list, ids = instruction_list(I.expressions)
+        vars = Symbol.(I.variables)
+        dlist, J = diff(list, vars, ids)
+
+        assignements = Dict{Symbol,Expr}()
+        for j = 1:size(J, 2), i = 1:size(J, 1)
+            if J[i, j] !== nothing
+                push!(assignements, J[i, j] => :(U[$i, $j] = $(J[i, j])))
+            end
+        end
+        to_expr(dlist, var_map, assignements)
+    end
+    quote
+        $checks
+        @inbounds $slp
+        U
+    end
+end
+@generated function jacobian!(U, ::T, x, p = nothing) where {T<:TSystem}
+    _jacobian!_impl(T)
+end
+@generated function jacobian!(U, ::T, x, t, p = nothing) where {T<:THomotopy}
+    _jacobian!_impl(T)
 end
