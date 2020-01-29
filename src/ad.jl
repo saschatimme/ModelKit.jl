@@ -14,7 +14,7 @@ function Base.push!(v::InstructionList, x)
     id
 end
 function Base.push!(v::InstructionList, x::Pair{Symbol,<:Tuple{Symbol,Any,Any}})
-    push!(v.instructions, (first(x),last(x)))
+    push!(v.instructions, (first(x), last(x)))
     first(x)
 end
 
@@ -136,92 +136,133 @@ function diff!(list::InstructionList, N::Int, diff_map)
         (op, arg1, arg2) = el
 
         if op == :^
-            p1 = p2 = :NONE
-            instr_added = false
-            for ∂i = 1:N
-                exp::Int = arg2
-                if haskey(diff_map, (arg1, ∂i))
-                    if p2 == :NONE
-                        if exp == 2
-                            p2 = push!(v, (:*, 2, arg1))
-                        else
-                            p1 = push!(v, (:^, arg1, exp - 1))
-                            p2 = push!(v, (:*, exp, p1))
+            let
+                p1 = p2 = :NONE
+                instr_added = false
+                for ∂i = 1:N
+                    exp::Int = arg2
+                    if haskey(diff_map, (arg1, ∂i))
+                        if p2 == :NONE
+                            if exp == 2
+                                p2 = push!(v, (:*, 2, arg1))
+                            else
+                                p1 = push!(v, (:^, arg1, exp - 1))
+                                p2 = push!(v, (:*, exp, p1))
+                            end
                         end
-                    end
-                    if !instr_added
-                        if exp == 2
-                            push!(v, id => (:*, arg1, arg1))
-                        else
-                            push!(v, id => (:*, p1, arg1))
+                        if !instr_added
+                            if exp == 2
+                                push!(v, id => (:*, arg1, arg1))
+                            else
+                                push!(v, id => (:*, p1, arg1))
+                            end
+                            instr_added = true
                         end
+                        ∂el = diff_map[(arg1, ∂i)]
+                        if ∂el != 1
+                            diff_map[(id, ∂i)] = push!(v, (:*, p2, ∂el))
+                        else
+                            diff_map[(id, ∂i)] = p2
+                        end
+                    elseif p2 != :NONE && !instr_added
+                        push!(v, id => el)
                         instr_added = true
                     end
-                    ∂el = diff_map[(arg1, ∂i)]
-                    if ∂el != 1
-                        diff_map[(id, ∂i)] = push!(v, (:*, p2, ∂el))
-                    else
-                        diff_map[(id, ∂i)] = p2
-                    end
-                elseif p2 != :NONE && !instr_added
-                    push!(v, id => el)
-                    instr_added = true
+
                 end
-            end
-            if !instr_added
-                push!(v, id => el)
+                if !instr_added
+                    push!(v, id => el)
+                end
             end
         elseif op == :*
-            for ∂i = 1:N
-                ∂i == 1 && push!(v, id => el)
+            let
+                for ∂i = 1:N
+                    ∂i == 1 && push!(v, id => el)
 
-                has_∂1 = haskey(diff_map, (arg1, ∂i))
-                has_∂2 = haskey(diff_map, (arg2, ∂i))
+                    has_∂1 = haskey(diff_map, (arg1, ∂i))
+                    has_∂2 = haskey(diff_map, (arg2, ∂i))
 
-                if has_∂2
-                    a2::Symbol = arg2
-                    ∂arg2 = diff_map[(a2, ∂i)]
-                    if ∂arg2 != 1
+                    if has_∂2
+                        a2::Symbol = arg2
+                        ∂arg2 = diff_map[(a2, ∂i)]
+                        if ∂arg2 != 1
+                            e1 = push!(v, (:*, arg1, ∂arg2))
+                        else
+                            e1 = arg1
+                        end
+                    end
+
+                    if has_∂1
+                        a1::Symbol = arg1
+                        ∂arg1 = diff_map[(a1, ∂i)]
+                        if ∂arg1 != 1
+                            e2 = push!(v, (:*, ∂arg1, arg2))
+                        else
+                            e2 = arg2
+                        end
+                    end
+
+                    if has_∂1 && has_∂2
+                        diff_map[(id, ∂i)] = push!(v, (:+, e1, e2))
+                    elseif has_∂1
+                        diff_map[(id, ∂i)] = e2
+                    elseif has_∂2
+                        diff_map[(id, ∂i)] = e1
+                    end
+                end
+            end
+        elseif op == :/
+            let
+                a1::Symbol
+                a2::Symbol
+                for ∂i = 1:N
+                    ∂i == 1 && push!(v, id => el)
+
+                    has_∂1 = haskey(diff_map, (arg1, ∂i))
+                    has_∂2 = haskey(diff_map, (arg2, ∂i))
+
+                    if has_∂1 && has_∂2
+                        a1 = arg1
+                        a2 = arg2
+                        ∂arg1 = diff_map[(a1, ∂i)]
+                        ∂arg2 = diff_map[(a2, ∂i)]
+                        e1 = push!(v, (:*, ∂arg1, a2))
+                        e2 = push!(v, (:*, a1, ∂arg2))
+                        e3 = push!(v, (:-, e1, e2))
+                        e4 = push!(v, :(:^, arg2, 2))
+                        diff_map[(id, ∂i)] = push!(v, :(:/, e3, e4))
+                    elseif has_∂1
+                        a1 = arg1
+                        ∂arg1 = diff_map[(a1, ∂i)]
+                        diff_map[(id, ∂i)] = push!(v, (:/, ∂arg1, arg2))
+                    elseif has_∂2
+                        a2 = arg2
+                        ∂arg2 = diff_map[(a2, ∂i)]
                         e1 = push!(v, (:*, arg1, ∂arg2))
-                    else
-                        e1 = arg1
+                        e2 = push!(v, (:*, -1, e1))
+                        e3 = push!(v, :(:^, arg2, 2))
+                        diff_map[(id, ∂i)] = push!(v, :(:/, e2, e3))
                     end
-                end
-
-                if has_∂1
-                    a1::Symbol = arg1
-                    ∂arg1 = diff_map[(a1, ∂i)]
-                    if ∂arg1 != 1
-                        e2 = push!(v, (:*, ∂arg1, arg2))
-                    else
-                        e2 = arg2
-                    end
-                end
-
-                if has_∂1 && has_∂2
-                    diff_map[(id, ∂i)] = push!(v, (:+, e1, e2))
-                elseif has_∂1
-                    diff_map[(id, ∂i)] = e2
-                elseif has_∂2
-                    diff_map[(id, ∂i)] = e1
                 end
             end
         elseif op == :+
-            for ∂i = 1:N
-                ∂i == 1 && push!(v, id => el)
+            let
+                for ∂i = 1:N
+                    ∂i == 1 && push!(v, id => el)
 
-                has_∂1 = haskey(diff_map, (arg1, ∂i))
-                has_∂2 = haskey(diff_map, (arg2, ∂i))
+                    has_∂1 = haskey(diff_map, (arg1, ∂i))
+                    has_∂2 = haskey(diff_map, (arg2, ∂i))
 
-                if has_∂1 && has_∂2
-                    diff_map[(id, ∂i)] = push!(
-                        v,
-                        (:+, diff_map[(arg1, ∂i)], diff_map[(arg2, ∂i)]),
-                    )
-                elseif has_∂1
-                    diff_map[(id, ∂i)] = diff_map[(arg1, ∂i)]
-                elseif has_∂2
-                    diff_map[(id, ∂i)] = diff_map[(arg2, ∂i)]
+                    if has_∂1 && has_∂2
+                        diff_map[(id, ∂i)] = push!(
+                            v,
+                            (:+, diff_map[(arg1, ∂i)], diff_map[(arg2, ∂i)]),
+                        )
+                    elseif has_∂1
+                        diff_map[(id, ∂i)] = diff_map[(arg1, ∂i)]
+                    elseif has_∂2
+                        diff_map[(id, ∂i)] = diff_map[(arg2, ∂i)]
+                    end
                 end
             end
         end
@@ -262,13 +303,20 @@ function unroll_pow(var, n)
 end
 
 
-function to_expr(list::InstructionList, var_map = Dict{Symbol,Union{Expr,Symbol}}())
+function to_expr(
+    list::InstructionList,
+    var_map = Dict{Symbol,Union{Expr,Symbol}}(),
+)
     exprs = Expr[]
     for (id, (op, arg1, arg2)) in list.instructions
         if op == :^
             x::Symbol = arg1
             k::Int = arg2
-            push!(exprs, :($id = $(unroll_pow(get(var_map, x, x), k))))
+            if k < 0
+                push!(exprs, :($id = inv($(unroll_pow(get(var_map, x, x), -k)))))
+            else
+                push!(exprs, :($id = $(unroll_pow(get(var_map, x, x), k))))
+            end
         else
             a = get(var_map, arg1, arg1)
             b = get(var_map, arg2, arg2)
