@@ -85,11 +85,6 @@ type_level(sys::Homotopy) = THomotopy(sys.expressions, sys.variables, sys.t, sys
 ## Helpers ##
 #############
 
-@inline sqr(x::Real) = x * x
-@inline function sqr(z::Complex)
-    x, y = reim(z)
-    Complex((x + y) * (x - y), (x + x) * y)
-end
 
 function _unrolled_pow_impl(n)
     n == 0 && return :(one(x1))

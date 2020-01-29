@@ -1,5 +1,5 @@
 struct InstructionList
-    instructions::Vector{Pair{Symbol,<:Any}}
+    instructions::Vector{Tuple{Symbol,Tuple{Symbol,Any,Any}}}
     var::Symbol
     n::Base.RefValue{Int}
 end
@@ -10,11 +10,11 @@ end
 
 function Base.push!(v::InstructionList, x)
     id = Symbol(v.var, v.n[] += 1)
-    push!(v.instructions, id => x)
+    push!(v.instructions, (id, x))
     id
 end
-function Base.push!(v::InstructionList, x::Pair{Symbol,<:Any})
-    push!(v.instructions, x)
+function Base.push!(v::InstructionList, x::Pair{Symbol,<:Tuple{Symbol,Any,Any}})
+    push!(v.instructions, (first(x),last(x)))
     first(x)
 end
 
@@ -63,7 +63,7 @@ function flat_expr!(
             push!(PSE, s)
             val = flat_expr!(v, CSE[ex], CSE, PSE)
             if val isa Symbol
-                v.instructions[end] = s => last(v.instructions[end])
+                v.instructions[end] = (s, last(v.instructions[end]))
             else
                 push!(v, s => val)
             end
@@ -132,7 +132,7 @@ end
 function diff!(list::InstructionList, N::Int, diff_map)
     n = length(list)
     v = InstructionList(n = Ref(n))
-    for (id, el::Tuple{Symbol,Any,Any}) in list.instructions
+    for (id, el) in list.instructions
         (op, arg1, arg2) = el
 
         if op == :^
@@ -227,4 +227,53 @@ function diff!(list::InstructionList, N::Int, diff_map)
         end
     end
     v
+end
+
+
+@inline sqr(x::Real) = x * x
+@inline function sqr(z::Complex)
+    x, y = reim(z)
+    Complex((x + y) * (x - y), (x + x) * y)
+end
+
+function unroll_pow(var, n)
+    n == 0 && return :(one($var))
+    n == 1 && return var
+    n == 2 && return :(sqr($var))
+    n == 3 && return :($var * sqr($var))
+    n == 4 && return :(sqr(sqr($var)))
+    n == 5 && return :($var * sqr(sqr($var)))
+
+    # base to expansion shows up which power it is needed to compute
+    d = digits(n, base = 2)
+    exprs = map(2:length(d)) do i
+        :($(Symbol(:x, 1 << (i - 1))) = sqr($(Symbol(:x, 1 << (i - 2)))))
+    end
+    prods = Symbol[]
+    for (i, di) in enumerate(d)
+        if !iszero(di)
+            push!(prods, Symbol(:x, 1 << (i - 1)))
+        end
+    end
+    if length(prods) > 1
+        push!(exprs, Expr(:call, :*, prods...))
+    end
+    Expr(:let, :(x1 = $var), Expr(:block, exprs...))
+end
+
+
+function to_expr(list::InstructionList, var_map = Dict{Symbol,Union{Expr,Symbol}}())
+    exprs = Expr[]
+    for (id, (op, arg1, arg2)) in list.instructions
+        if op == :^
+            x::Symbol = arg1
+            k::Int = arg2
+            push!(exprs, :($id = $(unroll_pow(get(var_map, x, x), k))))
+        else
+            a = get(var_map, arg1, arg1)
+            b = get(var_map, arg2, arg2)
+            push!(exprs, :($id = $(Expr(:call, op, a, b))))
+        end
+    end
+    Expr(:block, exprs...)
 end
