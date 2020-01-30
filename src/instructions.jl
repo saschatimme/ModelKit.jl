@@ -122,6 +122,12 @@ function Base.diff(
     dlist, J
 end
 
+"""
+    diff!(list::InstructionList, N::Int, diff_map)
+
+Returns an `InstructionList` list computing the derivatives of `N` variables.
+The derivatives of the instructions are stored in `diff_map`.
+"""
 function diff!(list::InstructionList, N::Int, diff_map)
     n = length(list)
     v = InstructionList(n = Ref(n))
@@ -263,12 +269,187 @@ function diff!(list::InstructionList, N::Int, diff_map)
     v
 end
 
+## Higher order AD. This follows Chapter 13 of Griewank and Walther
+"""
+    univariate_diff!(list::InstructionList, K::Int, diff_map)
 
-@inline sqr(x::Real) = x * x
+Returns an `InstructionList` list computing the first `K` derivatives.
+The derivatives of the instructions are stored in `diff_map`.
+"""
+function univariate_diff!(list::InstructionList, K::Int, diff_map)
+    n = length(list)
+    v = InstructionList(n = Ref(n))
+    for (id, el) in list.instructions
+        (op, arg1, arg2) = el
+
+        if op == :^
+            r::Int = arg2
+            if haskey(diff_map, (arg1, 1)) && r == 2
+                push!(v, id => el)
+                for k = 2:K
+                    w_k = nothing
+                    for j = 0:k
+                        u_j = j == 0 ? arg1 : get(diff_map, (arg1, j), nothing)
+                        u_kj = j == k ? arg1 :
+                            get(diff_map, (arg1, k - j), nothing)
+                        if j < k - j && u_j !== nothing && u_kj !== nothing
+                            s = push!(v, (:*, u_j, u_kj))
+                            if w_k === nothing
+                                w_k = s
+                            else
+                                w_k = push!(v, (:+, w_k, s))
+                            end
+                        end
+                        if j ≥ k - j && w_k !== nothing
+                            w_k = push!(v, (:*, 2, w_k))
+                        end
+                        if j == k - j
+                            s = push!(v, (:*, u_j, u_kj))
+                            if w_k === nothing
+                                w_k = s
+                            else
+                                w_k = push!(v, (:+, w_k, s))
+                            end
+                        end
+                        if j ≥ k - j
+                            break
+                        end
+                    end
+                    if w_k !== nothing
+                        diff_map[(id, k)] = w_k
+                    end
+                end
+            elseif haskey(diff_map, (arg1, 1)) && r > 2
+                w_0 = push!(v, id => (:^, arg1, r))
+                u_0_inv = push!(v, (:inv_not_zero, arg1, nothing))
+                # w_k is v_k in Griewank
+                w = Symbol[]
+                for k = 1:K
+                    s = nothing
+                    for j = 1:k
+                        u_j = get(diff_map, (arg1, j), nothing)
+                        if u_j !== nothing
+                            ũ_j = j == 1 ? u_j : push!(v, (:*, j, u_j))
+                        else
+                            ũ_j = nothing
+                        end
+
+                        w_kj = k == j ? w_0 : w[k - j]
+                        if ũ_j == 1
+                            s_j = w_kj
+                        elseif ũ_j !== nothing
+                            s_j = push!(v, (:*, w_kj, ũ_j))
+                        else
+                            s_j = nothing
+                        end
+                        if s_j !== nothing
+                            s = isnothing(s) ? s_j : push!(v, (:+, s, s_j))
+                        end
+                    end
+                    if s !== nothing
+                        s = push!(v, (:*, r, s))
+                    end
+
+                    t = nothing
+                    for j = 1:k-1
+                        u_kj = get(diff_map, (arg1, k - j), nothing)
+                        w̃_j = j == 1 ? w[1] : push!(v, (:*, j, w[j]))
+
+                        if u_kj == 1
+                            t_j = w̃_j
+                        elseif u_kj !== nothing
+                            t_j = push!(v, (:*, u_kj, w̃_j))
+                        end
+
+                        if t_j !== nothing
+                            t = isnothing(t) ? t_j : push!(v, (:+, t, t_j))
+                        end
+                    end
+                    if t == nothing && s == nothing
+                        continue
+                    elseif t == nothing
+                        w̃_k = push!(v, (:*, u_0_inv, s))
+                    else # s cannot be nothing
+                        w̃_k = push!(v, (:*, u_0_inv, push!(v, (:-, s, t))))
+                    end
+
+                    if k == 1
+                        w_k = w̃_k
+                    else
+                        w_k = push!(v, (:/, w̃_k, k))
+                    end
+
+                    push!(w, w_k)
+                    diff_map[(id, k)] = w_k
+                end
+            else
+                push!(v, id => el)
+            end
+        elseif op == :*
+            push!(v, id => el)
+
+            for k = 1:K
+                c_k = nothing
+                for j = 0:k
+                    if j == 0
+                        a = arg1
+                        b = get(diff_map, (arg2, k - j), nothing)
+                    elseif j == k
+                        a = get(diff_map, (arg1, k), nothing)
+                        b = arg2
+                    else
+                        a = get(diff_map, (arg1, j), nothing)
+                        b = get(diff_map, (arg2, k - j), nothing)
+                    end
+
+                    if a === nothing || b === nothing
+                        continue
+                    end
+
+                    if c_k === nothing
+                        c_k = push!(v, (:*, a, b))
+                    else
+                        c_k = push!(v, (:+, c_k, push!(v, (:*, a, b))))
+                    end
+                end
+
+                if c_k === nothing
+                    break
+                else
+                    diff_map[(id, k)] = c_k
+                end
+            end
+        elseif op == :+
+            for k = 1:K
+                a = get(diff_map, (arg1, k), nothing)
+                b = get(diff_map, (arg2, k), nothing)
+                if a !== nothing && b !== nothing
+                    diff_map[(id, k)] = push!(v, (:+, a, b))
+                elseif a !== nothing
+                    diff_map[(id, k)] = a
+                elseif b !== nothing
+                    diff_map[(id, k)] = b
+                end
+            end
+        elseif op == :/
+            error("Not implemented")
+        end
+    end
+    v
+end
+
+@inline sqr(x) = x^2
 @inline function sqr(z::Complex)
     x, y = reim(z)
     Complex((x + y) * (x - y), (x + x) * y)
 end
+
+"""
+    inv_not_zero(x)
+
+Invert x unless it is 0, then return 0.
+"""
+@inline inv_not_zero(x) = ifelse(iszero(x), x, inv(x))
 
 function unroll_pow(var, n)
     n == 0 && return :(one($var))
@@ -316,8 +497,12 @@ function to_expr(
             end
         else
             a = get(var_map, arg1, arg1)
-            b = get(var_map, arg2, arg2)
-            push!(exprs, :($id = $(Expr(:call, op, a, b))))
+            if arg2 !== nothing
+                b = get(var_map, arg2, arg2)
+                push!(exprs, :($id = $(Expr(:call, op, a, b))))
+            else
+                push!(exprs, :($id = $(Expr(:call, op, a))))
+            end
         end
 
         if haskey(assignements, id)

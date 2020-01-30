@@ -188,10 +188,7 @@ using Test
     @testset "Codegen helpers" begin
         @test ModelKit.sqr(3 + 2im) == (3 + 2im)^2
         @test ModelKit.sqr(3) == 3^2
-
-        for n in 0:15
-            @test ModelKit.unrolled_pow(3, Val(n)) == 3^n
-            @test ModelKit.unrolled_pow(3 - im, Val(n)) == (3 - im)^n
-        end
     end
+
+    include("test_instructions.jl")
 end
