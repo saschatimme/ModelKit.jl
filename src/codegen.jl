@@ -96,8 +96,13 @@ end
 
 boundscheck_var_map(F::System; kwargs...) =
     boundscheck_var_map(F.expressions, F.variables, F.parameters; kwargs...)
-boundscheck_var_map(H::Homotopy; kwargs...) =
-    boundscheck_var_map(H.expressions, H.variables, H.parameters, H.t; kwargs...)
+boundscheck_var_map(H::Homotopy; kwargs...) = boundscheck_var_map(
+    H.expressions,
+    H.variables,
+    H.parameters,
+    H.t;
+    kwargs...,
+)
 
 function boundscheck_var_map(
     exprs,
@@ -123,6 +128,8 @@ function boundscheck_var_map(
     checks = Expr[]
     if jacobian
         push!(checks, :(@boundscheck checkbounds(U, 1:$n, 1:$m)))
+    else
+        push!(checks, :(@boundscheck checkbounds(u, 1:$n)))
     end
     push!(checks, :(@boundscheck checkbounds(x, 1:$m)))
     push!(checks, :(@boundscheck p === nothing || checkbounds(p, 1:$l)))
@@ -170,7 +177,7 @@ end
 end
 
 function evaluate(T::TSystem, x, p = nothing)
-    to_smallest_type(evaluate!(Vector{Any}(undef, size(T,1)), T, x, p))
+    to_smallest_type(evaluate!(Vector{Any}(undef, size(T, 1)), T, x, p))
 end
 
 function _jacobian!_impl(::Type{T}) where {T<:Union{TSystem,THomotopy}}
@@ -188,7 +195,7 @@ function _jacobian!_impl(::Type{T}) where {T<:Union{TSystem,THomotopy}}
         for j = 1:size(J, 2), i = 1:size(J, 1)
             if J[i, j] isa Symbol
                 push!(assignements, J[i, j] => :(U[$i, $j] = $(J[i, j])))
-            elseif J[i,j] isa Number
+            elseif J[i, j] isa Number
                 push!(U_constants, :(U[$i, $j] = $(J[i, j])))
             end
         end
@@ -222,7 +229,9 @@ function jacobian(T::THomotopy, x, t, p = nothing)
 end
 
 
-function _evaluate_and_jacobian!_impl(::Type{T}) where {T<:Union{TSystem,THomotopy}}
+function _evaluate_and_jacobian!_impl(
+    ::Type{T},
+) where {T<:Union{TSystem,THomotopy}}
     I = interpret(T)
     checks, var_map = boundscheck_var_map(I; jacobian = true)
 
@@ -240,7 +249,7 @@ function _evaluate_and_jacobian!_impl(::Type{T}) where {T<:Union{TSystem,THomoto
         for j = 1:size(J, 2), i = 1:size(J, 1)
             if J[i, j] isa Symbol
                 push!(assignements, J[i, j] => :(U[$i, $j] = $(J[i, j])))
-            elseif J[i,j] isa Number
+            elseif J[i, j] isa Number
                 push!(U_constants, :(U[$i, $j] = $(J[i, j])))
             end
         end
@@ -256,10 +265,23 @@ function _evaluate_and_jacobian!_impl(::Type{T}) where {T<:Union{TSystem,THomoto
     end
 end
 
-@generated function evaluate_and_jacobian!(u, U, ::T, x, p = nothing) where {T<:TSystem}
+@generated function evaluate_and_jacobian!(
+    u,
+    U,
+    ::T,
+    x,
+    p = nothing,
+) where {T<:TSystem}
     _evaluate_and_jacobian!_impl(T)
 end
-@generated function evaluate_and_jacobian!(u, U, ::T, x, t, p = nothing) where {T<:THomotopy}
+@generated function evaluate_and_jacobian!(
+    u,
+    U,
+    ::T,
+    x,
+    t,
+    p = nothing,
+) where {T<:THomotopy}
     _evaluate_and_jacobian!_impl(T)
 end
 
@@ -276,4 +298,65 @@ function evaluate_jacobian(T::THomotopy, x, t, p = nothing)
     U = Matrix{Any}(undef, n, m)
     evaluate_and_jacobian!(u, U, T, x, t, p)
     to_smallest_type(u), to_smallest_type(U)
+end
+
+function generate_diff_t(T::Type{<:THomotopy}, d, DP)
+    H = interpret(T)
+    checks, var_map = boundscheck_var_map(H)
+
+    list, ids = instruction_list(H.expressions)
+
+    vars = Symbol.(H.variables)
+    params = Symbol.(H.parameters)
+    t = Symbol(H.t)
+
+    diff_map = Dict{Tuple{Symbol,Int},Any}()
+    for (i, v) in enumerate(vars)
+        for k = 1:(d-1)
+            diff_map[(v, k)] = :(dx[$k][$i])
+        end
+    end
+
+    for (i, v) in enumerate(params)
+        for k = 1:DP
+            diff_map[(v, k)] = :(dp[$k][$i])
+        end
+    end
+    diff_map[(t, 1)] = 1
+
+    dlist = univariate_diff!(list, d, diff_map)
+
+    assignements = Dict{Symbol,Expr}()
+    u_constants = Expr[]
+    for (i, id) in enumerate(ids)
+        d_id = get(diff_map, (id, d), nothing)
+        if d_id isa Symbol
+            push!(assignements, d_id => :(u[$i] = $d_id))
+        elseif d_id isa Nothing
+            push!(u_constants, :(u[$i] = zero(eltype(x))))
+        else
+            push!(u_constants, :(u[$i] = $d_id))
+        end
+    end
+    slp = to_expr(dlist, var_map, assignements)
+    append!(slp.args, u_constants)
+
+    quote
+        $checks
+        @inbounds $slp
+        u
+    end
+end
+
+@generated function diff_t!(
+    u,
+    ::T,
+    x::AbstractVector,
+    t,
+    dx::NTuple{D,<:AbstractVector} = Tuple{}(),
+    p::Union{Nothing,AbstractVector} = nothing,
+    dp::NTuple{DP,<:AbstractVector} = Tuple{}()
+) where {T<:THomotopy,D,DP}
+
+    generate_diff_t(T, D, DP)
 end

@@ -359,6 +359,8 @@ function univariate_diff!(list::InstructionList, K::Int, diff_map)
                             t_j = w̃_j
                         elseif u_kj !== nothing
                             t_j = push!(v, (:*, u_kj, w̃_j))
+                        else
+                            t_j = nothing
                         end
 
                         if t_j !== nothing
@@ -420,6 +422,7 @@ function univariate_diff!(list::InstructionList, K::Int, diff_map)
                 end
             end
         elseif op == :+
+            push!(v, id => el)
             for k = 1:K
                 a = get(diff_map, (arg1, k), nothing)
                 b = get(diff_map, (arg2, k), nothing)
