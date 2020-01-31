@@ -398,14 +398,14 @@ function jacobian(T::CompiledHomotopy, x, t, p = nothing)
     to_smallest_eltype(jacobian!(U, T, x, t, p))
 end
 
-function evaluate_jacobian(T::CompiledSystem, x, p = nothing)
+function evaluate_and_jacobian(T::CompiledSystem, x, p = nothing)
     n, m = size(T)
     u = Vector{Any}(undef, n)
     U = Matrix{Any}(undef, n, m)
     evaluate_and_jacobian!(u, U, T, x, p)
     to_smallest_eltype(u), to_smallest_eltype(U)
 end
-function evaluate_jacobian(T::CompiledHomotopy, x, t, p = nothing)
+function evaluate_and_jacobian(T::CompiledHomotopy, x, t, p = nothing)
     n, m = size(T)
     u = Vector{Any}(undef, n)
     U = Matrix{Any}(undef, n, m)
