@@ -1,42 +1,61 @@
+#####################
+## CompiledSystem  ##
+#####################
 const TSYSTEM_TABLE = Dict{
     UInt,
     Vector{Tuple{Vector{Expression},Vector{Variable},Vector{Variable}}},
 }()
 
-struct TSystem{H,I} end
+struct CompiledSystem{H,I}
+    nexpressions::Int
+    variables::Vector{Symbol}
+    parameters::Vector{Symbol}
+end
 
-function TSystem(
+function CompiledSystem(
     exprs::Vector{Expression},
     var_order::Vector{Variable},
     param_order::Vector{Variable} = Variable[],
 )
     val = (exprs, var_order, param_order)
     h = hash(val)
+
+    n = length(exprs)
+    vars = Symbol.(var_order)
+    params = Symbol.(param_order)
+
     if haskey(TSYSTEM_TABLE, h)
         # check that it is identical
         for (i, vi) in enumerate(TSYSTEM_TABLE[h])
             if vi == val
-                return TSystem{h,i}()
+                return CompiledSystem{h,i}(n, vars, params)
             end
         end
         push!(TSYSTEM_TABLE[h], val)
-        return TSystem{h,length(TSYSTEM_TABLE[h])}()
+        return CompiledSystem{h,length(TSYSTEM_TABLE[h])}(n, vars, params)
     else
         TSYSTEM_TABLE[h] = [val]
-        return TSystem{h,1}()
+        return CompiledSystem{h,1}(n, vars, params)
     end
 end
 
-function Base.show(io::IO, TS::TSystem)
-    print(io, "TSystem encoding: ")
+function Base.show(io::IO, TS::CompiledSystem)
+    print(io, "Compiled: ")
     show(io, interpret(TS))
 end
 
-interpret(TS::TSystem) = interpret(typeof(TS))
-interpret(::Type{TSystem{H,I}}) where {H,I} = System(TSYSTEM_TABLE[H][I]...)
+interpret(TS::CompiledSystem) = interpret(typeof(TS))
+interpret(::Type{CompiledSystem{H,I}}) where {H,I} =
+    System(TSYSTEM_TABLE[H][I]...)
 
-Base.size(TS::TSystem) = size(interpret(TS))
+Base.size(CS::CompiledSystem) = (CH.nexpressions, length(CH.variables))
+Base.size(CS::CompiledSystem, i::Integer) = size(CS)[i]
+Base.length(CS::CompiledSystem) = CH.nexpressions
 
+
+######################
+## CompiledHomotopy ##
+######################
 
 const THOMOTOPY_TABLE = Dict{
     UInt,
@@ -45,9 +64,13 @@ const THOMOTOPY_TABLE = Dict{
     },
 }()
 
-struct THomotopy{H,I} end
+struct CompiledHomotopy{H,I}
+    nexpressions::Int
+    variables::Vector{Symbol}
+    parameters::Vector{Symbol}
+end
 
-function THomotopy(
+function CompiledHomotopy(
     exprs::Vector{<:Expression},
     var_order::AbstractVector{<:Variable},
     t::Variable,
@@ -55,44 +78,54 @@ function THomotopy(
 )
     val = (exprs, var_order, t, param_order)
     h = hash(val)
+
+    n = length(exprs)
+    vars = Symbol.(var_order)
+    params = Symbol.(param_order)
+
     if haskey(THOMOTOPY_TABLE, h)
     # check that it is identical
         for (i, vi) in enumerate(THOMOTOPY_TABLE[h])
             if vi == val
-                return THomotopy{h,i}()
+                return CompiledHomotopy{h,i}(n, vars, params)
             end
         end
         push!(THOMOTOPY_TABLE[h], val)
-        return THomotopy{h,length(TSYSTEM_TABLE[h])}()
+        return CompiledHomotopy{h,length(TSYSTEM_TABLE[h])}(n, vars, params)
     else
         THOMOTOPY_TABLE[h] = [val]
-        return THomotopy{h,1}()
+        return CompiledHomotopy{h,1}(n, vars, params)
     end
 end
 
-function Base.show(io::IO, TH::THomotopy)
-    print(io, "THomotopy encoding: ")
+Base.size(CH::CompiledHomotopy) = (CH.nexpressions, length(CH.variables))
+Base.size(CS::CompiledHomotopy, i::Integer) = size(CS)[i]
+Base.length(CH::CompiledHomotopy) = CH.nexpressions
+
+function Base.show(io::IO, TH::CompiledHomotopy)
+    print(io, "Compiled: ")
     show(io, interpret(TH))
 end
 
-interpret(TH::THomotopy) = interpret(typeof(TH))
-interpret(::Type{THomotopy{H,I}}) where {H,I} =
+interpret(TH::CompiledHomotopy) = interpret(typeof(TH))
+interpret(::Type{CompiledHomotopy{H,I}}) where {H,I} =
     Homotopy(THOMOTOPY_TABLE[H][I]...)
 
-Base.size(TH::THomotopy) = size(interpret(TH))
+"""
+    compile(F::System)
 
-type_level(sys::System) =
-    TSystem(sys.expressions, sys.variables, sys.parameters)
-type_level(sys::Homotopy) =
-    THomotopy(sys.expressions, sys.variables, sys.t, sys.parameters)
+Compile the given system. Returns a `CompiledSystem`.
+    compile(H::Homotopy)
 
-function to_smallest_type(A::AbstractArray)
-    T = typeof(first(A))
-    for a in A
-        T = promote_type(T, typeof(a))
-    end
-    convert.(T, A)
-end
+Compile the given homotopy. Returns a `CompiledHomotopy`.
+"""
+compile(F::System) = CompiledSystem(F.expressions, F.variables, F.parameters)
+compile(H::Homotopy) =
+    CompiledHomotopy(H.expressions, H.variables, H.t, H.parameters)
+
+#############
+## CODEGEN ##
+#############
 
 boundscheck_var_map(F::System; kwargs...) =
     boundscheck_var_map(F.expressions, F.variables, F.parameters; kwargs...)
@@ -137,20 +170,9 @@ function boundscheck_var_map(
     Expr(:block, checks...), var_map
 end
 
-function codegen(
-    exprs::Vector{Expression},
-    var_map;
-    output_name::Symbol = gensym(:u),
-)
-    list, ids = instruction_list(exprs)
-    assignements = Dict{Symbol,Expr}()
-    for (i, id) in enumerate(ids)
-        push!(assignements, id => :($(output_name)[$i] = $id))
-    end
-    to_expr(list, var_map, assignements)
-end
-
-function _evaluate!_impl(::Type{T}) where {T<:Union{TSystem,THomotopy}}
+function _evaluate!_impl(
+    ::Type{T},
+) where {T<:Union{CompiledSystem,CompiledHomotopy}}
     I = interpret(T)
     checks, var_map = boundscheck_var_map(I)
     slp = let
@@ -169,18 +191,9 @@ function _evaluate!_impl(::Type{T}) where {T<:Union{TSystem,THomotopy}}
     end
 end
 
-@generated function evaluate!(u, ::T, x, p = nothing) where {T<:TSystem}
-    _evaluate!_impl(T)
-end
-@generated function evaluate!(u, ::T, x, t, p = nothing) where {T<:THomotopy}
-    _evaluate!_impl(T)
-end
-
-function evaluate(T::TSystem, x, p = nothing)
-    to_smallest_type(evaluate!(Vector{Any}(undef, size(T, 1)), T, x, p))
-end
-
-function _jacobian!_impl(::Type{T}) where {T<:Union{TSystem,THomotopy}}
+function _jacobian!_impl(
+    ::Type{T},
+) where {T<:Union{CompiledSystem,CompiledHomotopy}}
     I = interpret(T)
     checks, var_map = boundscheck_var_map(I; jacobian = true)
 
@@ -210,28 +223,10 @@ function _jacobian!_impl(::Type{T}) where {T<:Union{TSystem,THomotopy}}
         U
     end
 end
-@generated function jacobian!(U, ::T, x, p = nothing) where {T<:TSystem}
-    _jacobian!_impl(T)
-end
-@generated function jacobian!(U, ::T, x, t, p = nothing) where {T<:THomotopy}
-    _jacobian!_impl(T)
-end
-
-function jacobian(T::TSystem, x, p = nothing)
-    n, m = size(T)
-    U = Matrix{Any}(undef, n, m)
-    to_smallest_type(jacobian!(U, T, x, p))
-end
-function jacobian(T::THomotopy, x, t, p = nothing)
-    n, m = size(T)
-    U = Vector{Any}(undef, n, m)
-    to_smallest_type(jacobian!(U, T, x, t, p))
-end
-
 
 function _evaluate_and_jacobian!_impl(
     ::Type{T},
-) where {T<:Union{TSystem,THomotopy}}
+) where {T<:Union{CompiledSystem,CompiledHomotopy}}
     I = interpret(T)
     checks, var_map = boundscheck_var_map(I; jacobian = true)
 
@@ -265,42 +260,7 @@ function _evaluate_and_jacobian!_impl(
     end
 end
 
-@generated function evaluate_and_jacobian!(
-    u,
-    U,
-    ::T,
-    x,
-    p = nothing,
-) where {T<:TSystem}
-    _evaluate_and_jacobian!_impl(T)
-end
-@generated function evaluate_and_jacobian!(
-    u,
-    U,
-    ::T,
-    x,
-    t,
-    p = nothing,
-) where {T<:THomotopy}
-    _evaluate_and_jacobian!_impl(T)
-end
-
-function evaluate_jacobian(T::TSystem, x, p = nothing)
-    n, m = size(T)
-    u = Vector{Any}(undef, n)
-    U = Matrix{Any}(undef, n, m)
-    evaluate_and_jacobian!(u, U, T, x, p)
-    to_smallest_type(u), to_smallest_type(U)
-end
-function evaluate_jacobian(T::THomotopy, x, t, p = nothing)
-    n, m = size(T)
-    u = Vector{Any}(undef, n)
-    U = Matrix{Any}(undef, n, m)
-    evaluate_and_jacobian!(u, U, T, x, t, p)
-    to_smallest_type(u), to_smallest_type(U)
-end
-
-function generate_diff_t(T::Type{<:THomotopy}, d, DP)
+function _diff_t!_impl(T::Type{<:CompiledHomotopy}, d, DP)
     H = interpret(T)
     checks, var_map = boundscheck_var_map(H)
 
@@ -348,15 +308,112 @@ function generate_diff_t(T::Type{<:THomotopy}, d, DP)
     end
 end
 
+
+################
+## EVALUATION ##
+################
+
+# inplace (generated)
+@generated function evaluate!(u, T::CompiledSystem, x, p = nothing)
+    _evaluate!_impl(T)
+end
+@generated function evaluate!(u, T::CompiledHomotopy, x, t, p = nothing)
+    _evaluate!_impl(T)
+end
+
+@generated function jacobian!(U, T::CompiledSystem, x, p = nothing)
+    _jacobian!_impl(T)
+end
+@generated function jacobian!(U, T::CompiledHomotopy, x, t, p = nothing)
+    _jacobian!_impl(T)
+end
+
+@generated function evaluate_and_jacobian!(
+    u,
+    U,
+    T::CompiledSystem,
+    x,
+    p = nothing,
+)
+    _evaluate_and_jacobian!_impl(T)
+end
+@generated function evaluate_and_jacobian!(
+    u,
+    U,
+    T::CompiledHomotopy,
+    x,
+    t,
+    p = nothing,
+)
+    _evaluate_and_jacobian!_impl(T)
+end
+
 @generated function diff_t!(
     u,
-    ::T,
+    T::CompiledHomotopy,
     x::AbstractVector,
     t,
     dx::NTuple{D,<:AbstractVector} = Tuple{}(),
     p::Union{Nothing,AbstractVector} = nothing,
-    dp::NTuple{DP,<:AbstractVector} = Tuple{}()
-) where {T<:THomotopy,D,DP}
+    dp::NTuple{DP,<:AbstractVector} = Tuple{}(),
+) where {D,DP}
+    _diff_t!_impl(T, D, DP)
+end
 
-    generate_diff_t(T, D, DP)
+# non-inplace
+
+"""
+    to_smallest_eltype(A::AbstractArray)
+
+Convert an array to the smallest eltype such that all elements still fit.
+
+## Example
+```julia
+typeof(to_smallest_elype(Any[2,3])) == Vector{Int}
+```
+"""
+function to_smallest_eltype(A::AbstractArray)
+    T = typeof(first(A))
+    for a in A
+        T = promote_type(T, typeof(a))
+    end
+    convert.(T, A)
+end
+
+function evaluate(T::CompiledSystem, x, p = nothing)
+    to_smallest_eltype(evaluate!(Vector{Any}(undef, size(T, 1)), T, x, p))
+end
+function evaluate(T::CompiledHomotopy, x, t, p = nothing)
+    to_smallest_eltype(evaluate!(Vector{Any}(undef, size(T, 1)), T, x, t, p))
+end
+
+function jacobian(T::CompiledSystem, x, p = nothing)
+    n, m = size(T)
+    U = Matrix{Any}(undef, n, m)
+    to_smallest_eltype(jacobian!(U, T, x, p))
+end
+function jacobian(T::CompiledHomotopy, x, t, p = nothing)
+    n, m = size(T)
+    U = Vector{Any}(undef, n, m)
+    to_smallest_eltype(jacobian!(U, T, x, t, p))
+end
+
+function evaluate_jacobian(T::CompiledSystem, x, p = nothing)
+    n, m = size(T)
+    u = Vector{Any}(undef, n)
+    U = Matrix{Any}(undef, n, m)
+    evaluate_and_jacobian!(u, U, T, x, p)
+    to_smallest_eltype(u), to_smallest_eltype(U)
+end
+function evaluate_jacobian(T::CompiledHomotopy, x, t, p = nothing)
+    n, m = size(T)
+    u = Vector{Any}(undef, n)
+    U = Matrix{Any}(undef, n, m)
+    evaluate_and_jacobian!(u, U, T, x, t, p)
+    to_smallest_eltype(u), to_smallest_eltype(U)
+end
+
+function diff_t(H::CompiledHomotopy, x::AbstractVector, t, args...)
+    u = Vector{Any}(undef, size(H, 1))
+    to_smallest_eltype(diff_t!(u, H, x, t, args...))
 end
