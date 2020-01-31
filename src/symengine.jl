@@ -31,7 +31,8 @@ struct ExpressionRef
     ptr::Ptr{Cvoid}
 end
 ExpressionRef() = ExpressionRef(Ptr{Cvoid}())
-convert(::Type{ExpressionRef}, e::Expression) = ExpressionRef(e.ptr)
+
+Base.convert(::Type{ExpressionRef}, e::Expression) = ExpressionRef(e.ptr)
 
 function to_string(b::Union{Expression,ExpressionRef})
     if b.ptr == C_NULL
@@ -143,6 +144,20 @@ end
 Base.:^(a::Expression, b::Integer) = a^Expression(b)
 Base.:+(b::Expression) = b
 Base.:-(b::Expression) = Expression(0) - b
+
+
+# Functions
+macro make_func(arg1, arg2)
+    quote
+        function $(esc(arg1))(b::Expression)
+            a = Expression()
+            ccall(($(QuoteNode(arg2)), libsymengine), Base.Nothing, (Base.Ref{Expression}, Base.Ref{Expression}), a, b)
+            return a
+        end
+    end
+end
+
+@make_func expand basic_expand
 
 ##############################
 ## conversion to Expression ##
