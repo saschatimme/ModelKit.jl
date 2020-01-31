@@ -131,7 +131,7 @@ function getindex!(result::SE.Basic, s::VecBasic, n)
 end
 
 function Base.getindex(s::VecBasic, n)
-    @boundscheck checkindex(Bool, 1:length(s), n) || throw(BoundsError(s, n))
+    @boundscheck checkbounds(s, n)
     res = SE.Basic()
     ccall(
         (:vecbasic_get, SE.libsymengine),

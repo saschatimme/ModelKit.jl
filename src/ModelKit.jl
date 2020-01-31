@@ -14,12 +14,13 @@ export @var,
     System,
     Homotopy
 
-import LinearAlgebra, GeneralizedGenerated, SymEngine
-using OrderedCollections: OrderedDict
+import LinearAlgebra
 
-include("sym_engine.jl")
-include("symbolic.jl")
-include("instructions.jl")
-include("codegen.jl")
+include("symengine.jl")
+
+# include("sym_engine.jl")
+# include("symbolic.jl")
+# include("instructions.jl")
+# include("codegen.jl")
 
 end # module

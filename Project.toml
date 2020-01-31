@@ -4,10 +4,8 @@ authors = ["Sascha Timme <sascha@timme.xyz>"]
 version = "0.1.0"
 
 [deps]
-GeneralizedGenerated = "6b9d7cbe-bcb9-11e9-073f-15a7a543e2eb"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
-OrderedCollections = "bac558e1-5e72-5ebc-8fee-abe8a469f55d"
-SymEngine = "123dc426-2d89-5057-bbad-38513e3affd8"
+SymEngine_jll = "3428059b-622b-5399-b16f-d347a77089a4"
 
 [compat]
 julia = "1"
