@@ -1,32 +1,15 @@
 ## Variable construction
 
-function Variable(name::Union{Symbol,AbstractString})
-    SE.BasicType(SE.symbols(name))
-end
-
-Variable(name::Union{Symbol,AbstractString}, indices...) =
+Variable(name::Union{Symbol,AbstractString}, indices::Int...) =
     Variable("$(name)$(join(map_subscripts.(indices), "₋"))")
 
-const INDEX_MAP = Dict{Char,Char}(
-    '0' => '₀',
-    '1' => '₁',
-    '2' => '₂',
-    '3' => '₃',
-    '4' => '₄',
-    '5' => '₅',
-    '6' => '₆',
-    '7' => '₇',
-    '8' => '₈',
-    '9' => '₉',
-)
-map_subscripts(indices) = join(INDEX_MAP[c] for c in string(indices))
+const SUBSCRIPTS = ['₀', '₁', '₂', '₃', '₄', '₅', '₆', '₇', '₈', '₉']
+const SUBSCRIPT_MAP = Dict([first(string(i)) => SUBSCRIPTS[i+1] for i in 0:9])
+map_subscripts(indices) = join(SUBSCRIPT_MAP[c] for c in string(indices))
 
-Base.convert(::Type{Variable}, v::Union{AbstractString,Symbol}) = Variable(v)
-Base.convert(::Type{Expr}, v::Variable) = Symbol(v)
-Symbol(v::Variable) = Symbol(SE.toString(v))
-# type piracy here
-Base.show(io::IO, v::Type{Variable}) = print(io, "Variable")
-Base.show(io::IO, v::Type{Expression}) = print(io, "Expression")
+Base.isless(a::Variable, b::Variable) = isless(name(a), name(b))
+
+Symbol(v::Variable) = name(v)
 
 
 """
@@ -128,29 +111,27 @@ function buildvars(args; unique::Bool = false)
     vars, exprs
 end
 
-Base.adjoint(expr::Expression) = expr
-Base.conj(expr::Expression) = expr
-Base.transpose(expr::Expression) = expr
-Base.broadcastable(v::Expression) = Ref(v)
-
-Base.isless(a::Variable, b::Variable) = isless(SE.toString(a), SE.toString(b))
+Base.adjoint(expr::Basic) = expr
+Base.conj(expr::Basic) = expr
+Base.transpose(expr::Basic) = expr
+Base.broadcastable(v::Basic) = Ref(v)
 
 """
     variables(expr::Expression, parameters = Variable[])
     variables(exprs::AbstractVector{<:Expression}, parameters = Variable[])
 
-Obtain all variables used in the given expression.
+Obtain all variables used in the given expression as an `Set`.
 """
-variables(op::Expression, params = Variable[]) = variables([op], params)
-function variables(exprs::AbstractVector{<:Expression}, params = Variable[])
+function variables(exprs::AbstractVector{<:Basic})
     S = Set{Variable}()
-    for expr in exprs, v in SE.free_symbols(expr)
-        push!(S, SE.BasicType(v))
+    for expr in exprs
+        union!(S, variables(expr))
     end
-    setdiff!(S, params)
-    sort!(collect(S))
+    S
 end
-variables(exprs, params = Variable[]) = Variable[]
+function variables(exprs::Union{Basic, AbstractVector{<:Basic}}, params)
+    setdiff!(variables(exprs), params)
+end
 
 """
     nvariables(expr::Expression, parameters = Variable[])
@@ -180,44 +161,19 @@ julia> subs(x * y, [x,y] => [x+2,y+2])
 (x + 2) * (y + 2)
 ```
 """
-subs(exprs, args...) = map(e -> subs(e, args...), exprs)
-function subs(
-    expr::Expression,
-    sub_pairs::Union{
-        Pair{Variable,<:Number},
-        Pair{<:AbstractArray{Variable},<:AbstractArray{<:Number}},
-    }...,
-)
-    new_expr = expr
-    for sub in sub_pairs
-        new_expr = _subs(new_expr, sub)
+subs(ex::Basic, args...) = subs(ex, ExpressionMap(), args...)
+function subs(ex::Basic, D::ExpressionMap, (xs,ys)::Pair{<:AbstractArray{<:Basic}, <:AbstractArray}, args...)
+    size(xs) == size(ys) || throw(ArgumentError("Substitution arguments don't have the same size."))
+    for (x,y) in zip(xs, ys)
+        D[x] = y
     end
-    new_expr
+    subs(ex, D, args...)
 end
-function _subs(expr::Expression, args...)
-    SE.subs(expr, args...)
+function subs(ex::Basic, D::ExpressionMap, (x,y)::Pair{<:Basic, <:Number}, args...)
+    D[x] = y
+    subs(ex, D, args...)
 end
-function _subs(
-    expr::Expression,
-    sub_pairs::Pair{<:AbstractArray{Variable},<:AbstractArray{<:Number}},
-)
-    length(first(sub_pairs)) == length(last(sub_pairs)) || error(ArgumentError("Substitution arguments don't have the same length."))
-
-    list_of_tuples = map(tuple, first(sub_pairs), last(sub_pairs))
-    SE.subs(expr, list_of_tuples...)
-end
-
-# trait
-is_number_type(::Expression) = Val{false}()
-for T in SE.number_types
-    @eval begin
-        is_number_type(::SE.BasicType{Val{$(QuoteNode(T))}}) = Val{true}()
-    end
-end
-
-unpack_number(e::Expression) = unpack_number(e, is_number_type(e))
-unpack_number(e::Expression, ::Val{true}) = SE.N(e)
-unpack_number(e::Expression, ::Val{false}) = e
+subs(exs::AbstractArray{<:Basic}, args...) = map(ex -> subs(ex, args...), exs)
 
 """
     evaluate(expr::Expression, subs::Pair{Variable,<:Any}...)
@@ -237,49 +193,29 @@ julia> evaluate(x * y, [x,y] => [2, 3])
 6
 """
 function evaluate(
-    expr::Union{Expression,AbstractArray{<:Expression}},
-    pairs::Union{
-        Pair{Variable,<:Number},
-        Pair{<:AbstractArray{Variable},<:AbstractArray{<:Number}},
-    }...,
+    expr::Union{Basic,AbstractArray{<:Basic}},
+    args...
 )
-    unpack_number.(subs(expr, pairs...))
+    to_number.(subs(expr, args...))
 end
-(f::Expression)(pairs::Union{
-    Pair{Variable,<:Number},
-    Pair{<:AbstractArray{Variable},<:AbstractArray{<:Number}},
-}...,) = evaluate(f, pairs...)
-
-
-function LinearAlgebra.det(A::Matrix{<:Expression})
-    LinearAlgebra.det(convert(SE.CDenseMatrix, A))
-end
-function LinearAlgebra.lu(A::Matrix{<:Expression})
-    LinearAlgebra.lu(convert(SE.CDenseMatrix, A))
-end
+(f::Union{Basic,AbstractArray{<:Basic}})(args...) = evaluate(f, args...)
 
 
 """
-    differentiate(expr::Expression, var::Variable, k = 1)
+    differentiate(expr::Expression, var::Variable)
     differentiate(expr::Expression, var::Vector{Variable})
     differentiate(expr::::Vector{<:Expression}, var::Variable, k = 1)
     differentiate(expr::Vector{<:Expression}, var::Vector{Variable})
 
 Compute the derivative of `expr` with respect to the given variable `var`.
 """
-differentiate(expr::Expression, var::Variable) = SE.diff(expr, var)
-differentiate(expr::Expression, var::Variable, k) = SE.diff(expr, var, k)
-function differentiate(expr::Expression, vars::AbstractVector{Variable})
-    [SE.diff(expr, v) for v in vars]
+function differentiate(expr::Basic, vars::AbstractVector{Variable})
+    [differentiate(expr, v) for v in vars]
 end
-
-function differentiate(exprs::AbstractVector{<:Expression}, var::Variable)
+function differentiate(exprs::AbstractVector{<:Basic}, var::Variable)
     [differentiate(e, var) for e in exprs]
 end
-function differentiate(exprs::AbstractVector{<:Expression}, var::Variable, k)
-    [differentiate(e, var, k) for e in exprs]
-end
-function differentiate(exprs::AbstractVector{<:Expression}, vars::AbstractVector{Variable})
+function differentiate(exprs::AbstractVector{<:Basic}, vars::AbstractVector{Variable})
     [differentiate(e, v) for e in exprs, v in vars]
 end
 
@@ -340,145 +276,149 @@ Expand a given expression.
 julia> @var x y
 (x, y)
 
-julia> f = (x + y) ^ 2
-(x + y)^2
-
-julia> expand(f)
+julia> expand((x + y) ^ 2)
 2*x*y + x^2 + y^2
 ```
 """
-expand(e::Expression) = SE.expand(e)
+expand(e::Basic) = symengine_expand(e)
+
+#
+#
+# degrees(expr::SE.Basic, vars::Vector{Variable}) = degrees(SE.BasicType(expr), vars)
+# function degrees(expr::SE.BasicType{Val{:Add}}, vars::Vector{Variable})
+#     ops = UnsafeVecBasicIterator(args(SE.Basic(expr)))
+#     D = zeros(Int32, length(vars), length(ops))
+#
+#     b1, b2 = SE.Basic(), SE.Basic()
+#     mul_args, pow_args = VecBasic(), VecBasic()
+#
+#     for (j, op) in enumerate(ops)
+#         op_cls = ModelKit.type(op)
+#         if op_cls == :Mul
+#             op_args = UnsafeVecBasicIterator(args!(mul_args, op), b1)
+#             for arg in op_args
+#                 arg_cls = ModelKit.type(arg)
+#                 if arg_cls == :Symbol
+#                     for (i, v) in enumerate(vars)
+#                         if v == arg
+#                             D[i, j] = 1
+#                             break
+#                         end
+#                     end
+#                 elseif arg_cls == :Pow
+#                     vec = args!(pow_args, arg)
+#                     x = vec[1]
+#                     for (i, v) in enumerate(vars)
+#                         if x == v
+#                             D[i, j] = convert(Int, vec[2])
+#                             break
+#                         end
+#                     end
+#                 end
+#             end
+#         elseif op_cls == :Symbol
+#             for (i, v) in enumerate(vars)
+#                 if v == op
+#                     D[i, j] = 1
+#                     break
+#                 end
+#             end
+#         elseif op_cls == :Pow
+#             vec = args!(pow_args, op)
+#             x = vec[1]
+#             for (i, v) in enumerate(vars)
+#                 if x == v
+#                     D[i, j] = convert(Int, vec[2])
+#                     break
+#                 end
+#             end
+#         end
+#     end
+#     D
+# end
+# degrees(expr::SE.BasicType, vars::Vector{Variable}) = zeros(Int32, length(vars), 0)
+#
+#
 
 
-degrees(expr::SE.Basic, vars::Vector{Variable}) = degrees(SE.BasicType(expr), vars)
-function degrees(expr::SE.BasicType{Val{:Add}}, vars::Vector{Variable})
-    ops = UnsafeVecBasicIterator(args(SE.Basic(expr)))
-    D = zeros(Int32, length(vars), length(ops))
 
-    b1, b2 = SE.Basic(), SE.Basic()
-    mul_args, pow_args = VecBasic(), VecBasic()
-
-    for (j, op) in enumerate(ops)
-        op_cls = ModelKit.type(op)
-        if op_cls == :Mul
-            op_args = UnsafeVecBasicIterator(args!(mul_args, op), b1)
-            for arg in op_args
-                arg_cls = ModelKit.type(arg)
-                if arg_cls == :Symbol
-                    for (i, v) in enumerate(vars)
-                        if v == arg
-                            D[i, j] = 1
-                            break
-                        end
-                    end
-                elseif arg_cls == :Pow
-                    vec = args!(pow_args, arg)
-                    x = vec[1]
-                    for (i, v) in enumerate(vars)
-                        if x == v
-                            D[i, j] = convert(Int, vec[2])
-                            break
-                        end
-                    end
-                end
-            end
-        elseif op_cls == :Symbol
-            for (i, v) in enumerate(vars)
-                if v == op
-                    D[i, j] = 1
-                    break
-                end
-            end
-        elseif op_cls == :Pow
-            vec = args!(pow_args, op)
-            x = vec[1]
-            for (i, v) in enumerate(vars)
-                if x == v
-                    D[i, j] = convert(Int, vec[2])
-                    break
-                end
-            end
-        end
-    end
-    D
-end
-degrees(expr::SE.BasicType, vars::Vector{Variable}) = zeros(Int32, length(vars), 0)
-
-
-to_dict(expr::SE.Basic, vars::Vector{Variable}) = to_dict(SE.BasicType(expr), vars)
-function to_dict(expr::SE.BasicType{Val{:Add}}, vars::Vector{Variable})
-    ops = UnsafeVecBasicIterator(args(SE.Basic(expr)))
-    D = zeros(Int32, length(vars), length(ops))
-
-    b1, b2 = SE.Basic(), SE.Basic()
-    mul_args, pow_args = VecBasic(), VecBasic()
-
+function to_dict(expr::Expression, vars::AbstractVector{Variable})
+    mul_args, pow_args = ExprVec(), ExprVec()
     dict = Dict{Vector{Int},Expression}()
 
-    for op in ops
-        cls = ModelKit.type(op)
-        d = zeros(Int, length(vars))
-        coeff = Expression(1)
-        if cls == :Mul
-            op_args = UnsafeVecBasicIterator(args!(mul_args, op), b1)
-            for arg in op_args
-                arg_cls = ModelKit.type(arg)
-                is_coeff = true
-                if arg_cls == :Symbol
-                    for (i, v) in enumerate(vars)
-                        if v == arg
-                            d[i] = 1
-                            is_coeff = false
-                            break
-                        end
-                    end
-                elseif arg_cls == :Pow
-                    vec = args!(pow_args, arg)
-                    x = vec[1]
-                    for (i, v) in enumerate(vars)
-                        if x == v
-                            d[i] = convert(Int, vec[2])
-                            is_coeff = false
-                            break
-                        end
-                    end
-                end
-                if is_coeff
-                    coeff = coeff * arg
-                end
-            end
-        elseif cls == :Symbol
-            for (i, v) in enumerate(vars)
-                if v == arg
-                    d[i] = 1
-                    break
-                end
-            end
-        elseif cls == :Pow
-            vec = args!(pow_args, arg)
-            x = vec[1]
-            for (i, v) in enumerate(vars)
-                if x == v
-                    d[i] = convert(Int, vec[2])
-                    break
-                end
-            end
-        elseif cls ∈ SE.number_types
-            coeff = copy(op)
+    if class(expr) == :Add
+        for op in args(expr)
+            to_dict_op!(dict, op, vars, mul_args, pow_args)
         end
-        if haskey(dict, d)
-            dict[d] += coeff
-        else
-            dict[d] = coeff
+    else
+        to_dict_op!(dict, expr, vars, mul_args, pow_args)
+    end
+
+    dict
+end
+
+function to_dict_op!(dict, op, vars, mul_args, pow_args)
+    cls = class(op)
+    d = zeros(Int, length(vars))
+    coeff = Expression(1)
+    if cls == :Mul
+        op_args = args!(mul_args, op)
+        for arg in op_args
+            arg_cls = class(arg)
+            is_coeff = true
+            if arg_cls == :Symbol
+                for (i, v) in enumerate(vars)
+                    if v == arg
+                        d[i] = 1
+                        is_coeff = false
+                        break
+                    end
+                end
+            elseif arg_cls == :Pow
+                vec = args!(pow_args, arg)
+                x = vec[1]
+                for (i, v) in enumerate(vars)
+                    if x == v
+                        d[i] = convert(Int, vec[2])
+                        is_coeff = false
+                        break
+                    end
+                end
+            end
+            if is_coeff
+                mul!(coeff, coeff, arg)
+            end
         end
+    elseif cls == :Symbol
+        for (i, v) in enumerate(vars)
+            if v == arg
+                d[i] = 1
+                break
+            end
+        end
+    elseif cls == :Pow
+        vec = args!(pow_args, op)
+        x = vec[1]
+        for (i, v) in enumerate(vars)
+            if x == v
+                d[i] = convert(Int, vec[2])
+                break
+            end
+        end
+    elseif cls == :Div
+        div!(coeff, coeff, op)
+    elseif cls ∈ SE.number_types
+        coeff = copy(op)
+    end
+
+    if haskey(dict, d)
+        add!(dict[d], dict[d], coeff)
+    else
+        dict[d] = coeff
     end
     dict
 end
 
-function cse(ex::Vector{Expression})
-    a, b, c = SE.cse(ex)
-    Expression[ci for ci in c], Dict{Expression,Expression}(zip(a, b))
-end
 
 #########################
 ## System and Homotopy ##
