@@ -17,9 +17,9 @@ export @var,
 import LinearAlgebra
 
 include("symengine.jl")
-
+include("symbolic.jl")
 # include("sym_engine.jl")
-# include("symbolic.jl")
+
 # include("instructions.jl")
 # include("codegen.jl")
 

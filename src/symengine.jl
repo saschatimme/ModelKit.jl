@@ -1,7 +1,6 @@
 export Expression, Variable
 
 using SymEngine_jll: libsymengine
-import LinearAlgebra
 
 function __init__()
     __init_constants()
@@ -70,6 +69,7 @@ struct Variable <: Number
     Variable(s::Union{String,Symbol}) = new(Expression(s))
 end
 
+name(v::Variable) = Symbol(to_string(v))
 
 const Basic = Union{Expression,ExpressionRef,Variable}
 
@@ -171,7 +171,6 @@ for (op, libnm) in [
     (:*, :mul),
     (:/, :div),
     (://, :div),
-    (:^, :pow),
 ]
     f = Expr(:., :Base, QuoteNode(op))
     @eval begin
@@ -190,7 +189,18 @@ for (op, libnm) in [
     end
 end
 
-Base.:^(a::Basic, b::Integer) = a^Expression(b)
+function Base.:(^)(x::Basic, k::Integer)
+    a = Expression()
+    ccall(
+        (:basic_pow, libsymengine),
+        Nothing,
+        (Ref{Expression}, Ref{ExpressionRef}, Ref{Expression}),
+        a,
+        x,
+        Expression(k),
+    )
+    return a
+end
 Base.:+(b::Basic) = b
 Base.:-(b::Basic) = Expression(0) - b
 
@@ -299,6 +309,43 @@ Base.complex(x::Real, y::Expression) = x + y * __im
 ## Iterating over expressions ##
 ################################
 
+mutable struct ExpressionSet
+    ptr::Ptr{Cvoid}
+
+    function ExpressionSet()
+        z = new(ccall((:setbasic_new, libsymengine), Ptr{Cvoid}, ()))
+        finalizer(free!, z)
+        z
+    end
+end
+
+function free!(x::ExpressionSet)
+    if x.ptr != C_NULL
+        ccall((:setbasic_free, libsymengine), Nothing, (Ptr{Cvoid},), x.ptr)
+        x.ptr = C_NULL
+    end
+    nothing
+end
+
+Base.length(s::ExpressionSet) =
+    ccall((:setbasic_size, libsymengine), Int, (Ptr{Cvoid},), s.ptr)
+
+function Base.getindex(s::ExpressionSet, n::Int)
+    result = Expression()
+    ccall((:setbasic_get, libsymengine), Nothing, (Ptr{Cvoid}, Int, Ref{Expression}), s.ptr, n - 1, result)
+    result
+end
+
+variables(ex::Variable) = Set(ex)
+function variables(ex::Basic)
+    syms = ExpressionSet()
+    ccall((:basic_free_symbols, libsymengine), Nothing, (Ref{ExpressionRef}, Ptr{Cvoid}), ex, syms.ptr)
+    S = Set{Variable}()
+    for i in 1:length(syms)
+        push!(S, Variable(syms[i]))
+    end
+    S
+end
 
 # Get class of an Expression
 
@@ -487,6 +534,7 @@ function _numer_denom(x::Basic)
     return a, b
 end
 
+is_number(ex::Expression) = class(ex) in NUMBER_TYPES
 function to_number(x::Basic)
     cls = class(x)
 
@@ -503,14 +551,14 @@ function to_number(x::Basic)
         return convert(Float64, x)
     elseif cls == :Rational
         a, b = _numer_denom(x)
-        to_number(a) // to_number(b)
+        return to_number(a) // to_number(b)
     elseif cls == :RealMPFR
         return convert(BigFloat, x)
     elseif cls in COMPLEX_NUMBER_TYPES
         a, b = reim(x)
-        complex(to_number(a), to_number(b))
+        return complex(to_number(a), to_number(b))
     else
-        throw(ArgumentError("Not a supported number type."))
+        return x
     end
 end
 
@@ -518,8 +566,8 @@ end
 ## SUBS ##
 ##########
 
-subs(ex::Basic, k::Basic, v) = subs(ex, k, Expression(v))
-function subs(ex::Basic, k::Basic, v::Basic)
+subs(ex::Basic, (k,v)::Pair{<:Basic, <:Number}) = subs(ex, k => Expression(v))
+function subs(ex::Basic, (k,v)::Pair{<:Basic,<:Basic})
     s = Expression()
     ccall(
         (:basic_subs2, libsymengine),
@@ -557,7 +605,7 @@ mutable struct ExpressionMatrix <: AbstractMatrix{Expression}
     end
 end
 
-function ExpressionMatrix(A::AbstractMatrix{Expression})
+function ExpressionMatrix(A::AbstractMatrix{<:Basic})
     m, n = size(A)
     B = ExpressionMatrix(m, n)
     for j = 1:m, i = 1:n
@@ -619,5 +667,5 @@ function LinearAlgebra.det(A::ExpressionMatrix)
     )
     result
 end
-LinearAlgebra.det(A::AbstractMatrix{Expression}) =
+LinearAlgebra.det(A::AbstractMatrix{<:Basic}) =
     LinearAlgebra.det(ExpressionMatrix(A))

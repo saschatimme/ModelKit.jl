@@ -3,7 +3,6 @@ using LinearAlgebra
 using Test
 
 @testset "ModelKit.jl" begin
-    # Write your own tests here.
 
     @testset "Variables" begin
         @var a b x[1:2] y[1:2, 1:3]
@@ -25,10 +24,10 @@ using Test
         end
 
         f = a + b
-        @test variables(f) == [a, b]
+        @test variables(f) == Set([a, b])
         @test nvariables(f) == 2
         g = x[1]
-        @test variables([f, g]) == [a, b, x[1]]
+        @test variables([f, g]) == Set([a, b, x[1]])
         @test nvariables([f, g]) == 3
     end
 
@@ -47,11 +46,12 @@ using Test
         @var x y w
         f = x^2 * (x + y * w)
         @test evaluate([f, f], [x, y, w] => [2, 3, -5]) == [-52, -52]
+        @test [f, 2f]([x, y, w] => [2, 3, -5]) == [-52, -104]
     end
 
     @testset "Linear Algebra" begin
         @var x[1:2, 1:2]
-        @test_broken det(x) == -x[2, 1] * x[1, 2] + x[2, 2] * x[1, 1]
+        @test det(x) == -x[2, 1] * x[1, 2] + x[2, 2] * x[1, 1]
     end
 
     @testset "Differentation" begin
