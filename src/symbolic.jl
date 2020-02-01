@@ -169,7 +169,7 @@ function subs(ex::Basic, (xs,ys)::Pair{<:AbstractArray{<:Basic}, <:AbstractArray
     end
     ex
 end
-subs(exs::AbstractVector{<:Basic}, args...) = map(ex -> subs(ex, args...), exs)
+subs(exs::AbstractArray{<:Basic}, args...) = map(ex -> subs(ex, args...), exs)
 
 """
     evaluate(expr::Expression, subs::Pair{Variable,<:Any}...)
@@ -195,39 +195,25 @@ function evaluate(
     to_number.(subs(expr, args...))
 end
 (f::Union{Basic,AbstractArray{<:Basic}})(args...) = evaluate(f, args...)
-#
-#
-# function LinearAlgebra.det(A::Matrix{<:Expression})
-#     LinearAlgebra.det(convert(SE.CDenseMatrix, A))
-# end
-# function LinearAlgebra.lu(A::Matrix{<:Expression})
-#     LinearAlgebra.lu(convert(SE.CDenseMatrix, A))
-# end
-#
-#
-# """
-#     differentiate(expr::Expression, var::Variable, k = 1)
-#     differentiate(expr::Expression, var::Vector{Variable})
-#     differentiate(expr::::Vector{<:Expression}, var::Variable, k = 1)
-#     differentiate(expr::Vector{<:Expression}, var::Vector{Variable})
-#
-# Compute the derivative of `expr` with respect to the given variable `var`.
-# """
-# differentiate(expr::Expression, var::Variable) = SE.diff(expr, var)
-# differentiate(expr::Expression, var::Variable, k) = SE.diff(expr, var, k)
-# function differentiate(expr::Expression, vars::AbstractVector{Variable})
-#     [SE.diff(expr, v) for v in vars]
-# end
-#
-# function differentiate(exprs::AbstractVector{<:Expression}, var::Variable)
-#     [differentiate(e, var) for e in exprs]
-# end
-# function differentiate(exprs::AbstractVector{<:Expression}, var::Variable, k)
-#     [differentiate(e, var, k) for e in exprs]
-# end
-# function differentiate(exprs::AbstractVector{<:Expression}, vars::AbstractVector{Variable})
-#     [differentiate(e, v) for e in exprs, v in vars]
-# end
+
+
+"""
+    differentiate(expr::Expression, var::Variable)
+    differentiate(expr::Expression, var::Vector{Variable})
+    differentiate(expr::::Vector{<:Expression}, var::Variable, k = 1)
+    differentiate(expr::Vector{<:Expression}, var::Vector{Variable})
+
+Compute the derivative of `expr` with respect to the given variable `var`.
+"""
+function differentiate(expr::Basic, vars::AbstractVector{Variable})
+    [differentiate(expr, v) for v in vars]
+end
+function differentiate(exprs::AbstractVector{<:Basic}, var::Variable)
+    [differentiate(e, var) for e in exprs]
+end
+function differentiate(exprs::AbstractVector{<:Basic}, vars::AbstractVector{Variable})
+    [differentiate(e, v) for e in exprs, v in vars]
+end
 #
 # """
 #     monomials(vars::Vector{<:Variable}, d; homogeneous::Bool = false)

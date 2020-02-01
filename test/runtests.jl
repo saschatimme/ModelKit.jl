@@ -38,8 +38,8 @@ using Test
         @test subs(f, x => z) == z^2 * (z + w * y)
         @test subs([f], x => z) == [z^2 * (z + w * y)]
         @test subs(f, [x, y] => [z^2, z + 2]) == z^4 * (w * (2 + z) + z^2)
-        @test subs(f, [x, y] => [z^2, z + 2], w => u) ==
-              z^4 * (u * (2 + z) + z^2)
+        @test subs(f, [x, y] => [z^2, z + 2], w => u) == z^4 *
+                                                         (u * (2 + z) + z^2)
     end
 
     @testset "Evaluation" begin
@@ -61,11 +61,9 @@ using Test
         g = x^3 + y^3
 
         @test differentiate(f, x) == 2x
-        @test differentiate(f, x, 2) == 2
         @test differentiate(f, [x, y]) == [2x, 2y]
 
         @test differentiate([f, g], x) == [2x, 3 * x^2]
-        @test differentiate([f, g], x, 2) == [2, 6x]
         @test differentiate([f, g], [x, y]) == [2x 2y; 3 * x^2 3 * y^2]
     end
 
@@ -77,18 +75,15 @@ using Test
     @testset "Modeling" begin
         @testset "Bottleneck" begin
             @var x y z
-            f = [
-                (0.3 * x^2 + 0.5z + 0.3x + 1.2 * y^2 - 1.1)^2 +
-                (0.7 * (y - 0.5x)^2 + y + 1.2 * z^2 - 1)^2 - 0.3,
-            ]
+            f = [(0.3 * x^2 + 0.5z + 0.3x + 1.2 * y^2 - 1.1)^2 +
+                 (0.7 * (y - 0.5x)^2 + y + 1.2 * z^2 - 1)^2 - 0.3]
 
-            I = let
-                x = variables(f)
+            I = let x = [x, y, z]
                 n, m = length(x), length(f)
                 @unique_var y[1:n] v[1:m] w[1:m]
-                J = [differentiate(fᵢ, xᵢ) for fᵢ in f, xᵢ in x]
-                f′ = [subs(fᵢ, x => y) for fᵢ in f]
-                J′ = [subs(gᵢ, x => y) for gᵢ in J]
+                J = differentiate(f, x)
+                f′ = f(x => y)
+                J′ = J(x => y)
                 Nx = (x - y) - J' * v
                 Ny = (x - y) - J′' * w
                 System([f; f′; Nx; Ny], [x; y; v; w])
@@ -165,8 +160,7 @@ using Test
     @testset "Homotopy" begin
         @var x y z t
 
-        h = [x^2 + y + z + 2t,
-         4 * x^2 * z^2 * y + 4z - 6x * y * z^2]
+        h = [x^2 + y + z + 2t, 4 * x^2 * z^2 * y + 4z - 6x * y * z^2]
         H = Homotopy(h, [x, y, z], t)
 
         show_H = """

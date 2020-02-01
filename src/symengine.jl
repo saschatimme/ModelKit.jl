@@ -332,19 +332,45 @@ Base.length(s::ExpressionSet) =
 
 function Base.getindex(s::ExpressionSet, n::Int)
     result = Expression()
-    ccall((:setbasic_get, libsymengine), Nothing, (Ptr{Cvoid}, Int, Ref{Expression}), s.ptr, n - 1, result)
+    ccall(
+        (:setbasic_get, libsymengine),
+        Nothing,
+        (Ptr{Cvoid}, Int, Ref{Expression}),
+        s.ptr,
+        n - 1,
+        result,
+    )
     result
 end
 
 variables(ex::Variable) = Set(ex)
 function variables(ex::Basic)
     syms = ExpressionSet()
-    ccall((:basic_free_symbols, libsymengine), Nothing, (Ref{ExpressionRef}, Ptr{Cvoid}), ex, syms.ptr)
+    ccall(
+        (:basic_free_symbols, libsymengine),
+        Nothing,
+        (Ref{ExpressionRef}, Ptr{Cvoid}),
+        ex,
+        syms.ptr,
+    )
     S = Set{Variable}()
-    for i in 1:length(syms)
+    for i = 1:length(syms)
         push!(S, Variable(syms[i]))
     end
     S
+end
+
+function differentiate(f::Basic, v::Variable)
+    a = Expression()
+    ret = ccall(
+        (:basic_diff, libsymengine),
+        Int,
+        (Ref{Basic}, Ref{ExpressionRef}, Ref{ExpressionRef}),
+        a,
+        f,
+        v,
+    )
+    return a
 end
 
 # Get class of an Expression
@@ -566,8 +592,8 @@ end
 ## SUBS ##
 ##########
 
-subs(ex::Basic, (k,v)::Pair{<:Basic, <:Number}) = subs(ex, k => Expression(v))
-function subs(ex::Basic, (k,v)::Pair{<:Basic,<:Basic})
+subs(ex::Basic, (k, v)::Pair{<:Basic,<:Number}) = subs(ex, k => Expression(v))
+function subs(ex::Basic, (k, v)::Pair{<:Basic,<:Basic})
     s = Expression()
     ccall(
         (:basic_subs2, libsymengine),
