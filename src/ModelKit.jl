@@ -12,7 +12,15 @@ export @var,
     monomials,
     expand,
     System,
-    Homotopy
+    Homotopy,
+    evaluate!,
+    jacobian!,
+    evaluate_and_jacobian!,
+    diff_t!,
+    evaluate,
+    jacobian,
+    evaluate_and_jacobian,
+    diff_t
 
 import LinearAlgebra
 

@@ -316,20 +316,50 @@ end
 ################
 
 # inplace (generated)
+"""
+    evaluate!(u, T::CompiledSystem, x, p = nothing)
+
+Evaluate `T` for variables `x` and parameters `p` and store result in `u`.
+"""
 @generated function evaluate!(u, T::CompiledSystem, x, p = nothing)
     _evaluate!_impl(T)
 end
+
+"""
+    evaluate!(u, T::CompiledHomotopy, x, t, p = nothing)
+
+Evaluate `T` for variables `x`, `t` and parameters `p` and store result in `u`.
+"""
 @generated function evaluate!(u, T::CompiledHomotopy, x, t, p = nothing)
     _evaluate!_impl(T)
 end
 
+"""
+    jacobian!(U, T::CompiledHomotopy, x, p = nothing)
+
+Evaluate the Jacobian of `T` for variables `x`, `t` and parameters `p`
+and store result in `u`.
+"""
 @generated function jacobian!(U, T::CompiledSystem, x, p = nothing)
     _jacobian!_impl(T)
 end
+
+"""
+    jacobian!(U, T::CompiledHomotopy, x, t, p = nothing)
+
+Evaluate the Jacobian of `T` for variables `x`, `t` and parameters `p` and
+store result in `u`.
+"""
 @generated function jacobian!(U, T::CompiledHomotopy, x, t, p = nothing)
     _jacobian!_impl(T)
 end
 
+"""
+    evaluate_and_jacobian!(u, U, T::CompiledHomotopy, x, p = nothing)
+
+Evaluate `T` and its Jacobian for variables `x` and parameters `p` and
+store result in `u`.
+"""
 @generated function evaluate_and_jacobian!(
     u,
     U,
@@ -339,6 +369,13 @@ end
 )
     _evaluate_and_jacobian!_impl(T)
 end
+
+"""
+    evaluate_and_jacobian!(u, U, T::CompiledHomotopy, x, t, p = nothing)
+
+Evaluate `T` and its Jacobian for variables `x`, `t` and parameters `p` and
+store result in `u`.
+"""
 @generated function evaluate_and_jacobian!(
     u,
     U,
@@ -350,6 +387,16 @@ end
     _evaluate_and_jacobian!_impl(T)
 end
 
+"""
+    diff_t!(u, H::CompiledHomotopy, x, t, (x₁,…,xᵣ₋₁) = (), p = nothing, (p₁,…,pⱼ) = ())
+
+Evaluate the expression
+```math
+(1 / r!) dʳ/dλʳ \\, H(x + ∑_{k=1}^{r-1} xᵢλⁱ,t + λ)
+```
+at ``λ = 0``.
+If ``j < r-1`` then ``pₐ = 0`` for ``a > j``.
+"""
 @generated function diff_t!(
     u,
     T::CompiledHomotopy,
@@ -388,6 +435,9 @@ end
 function evaluate(T::CompiledHomotopy, x, t, p = nothing)
     to_smallest_eltype(evaluate!(Vector{Any}(undef, size(T, 1)), T, x, t, p))
 end
+
+(T::CompiledSystem)(x, p = nothing) = evaluate(x, p)
+(T::CompiledHomotopy)(x, t, p = nothing) = evaluate(x, t, p)
 
 function jacobian(T::CompiledSystem, x, p = nothing)
     n, m = size(T)
