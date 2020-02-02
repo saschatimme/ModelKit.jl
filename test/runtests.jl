@@ -1,6 +1,6 @@
-using ModelKit
-using LinearAlgebra
-using Test
+using ModelKit, LinearAlgebra, Test
+import SymEngine
+const SE = SymEngine
 
 @testset "ModelKit.jl" begin
 
@@ -40,6 +40,7 @@ using Test
         @test subs(f, [x, y] => [z^2, z + 2]) == z^4 * (w * (2 + z) + z^2)
         @test subs(f, [x, y] => [z^2, z + 2], w => u) == z^4 *
                                                          (u * (2 + z) + z^2)
+        @test subs(f, x => z^2, y => 3, w => u) == z^4 * (3 * u + z^2)
     end
 
     @testset "Evaluation" begin
@@ -105,9 +106,9 @@ using Test
             #f_a_0 is tangent to g_b₀ at x₀
             function Incidence(f, a₀, g, b₀, x₀)
                 fᵢ = f(x => x₀, a => a₀)
-                ∇ᵢ = [∇ᵢ(x => x₀, a => a₀) for ∇ᵢ in ∇]
+                ∇ᵢ = ∇(x => x₀, a => a₀)
                 Cᵢ = g(x => x₀, c => b₀)
-                ∇_Cᵢ = [∇ⱼ(x => x₀, c => b₀) for ∇ⱼ in ∇_2]
+                ∇_Cᵢ = ∇_2(x => x₀, c => b₀)
 
                 [fᵢ; Cᵢ; det([∇ᵢ ∇_Cᵢ])]
             end
@@ -150,10 +151,10 @@ using Test
          b + 2*x^2"""
         @test sprint(show, F) == show_F
 
-        T = ModelKit.type_level(F)
+        T = compile(F)
         F2 = ModelKit.interpret(T)
         @test F == F2
-        @test sprint(show, T) == "TSystem encoding: $show_F"
+        @test sprint(show, T) == "Compiled: $show_F"
         @test size(T) == size(F) == (2, 2)
     end
 
@@ -172,10 +173,10 @@ using Test
 
         @test sprint(show, H) == show_H
 
-        T = ModelKit.type_level(H)
+        T = compile(H)
         H2 = ModelKit.interpret(T)
         @test H == H2
-        @test sprint(show, T) == "THomotopy encoding: $show_H"
+        @test sprint(show, T) == "Compiled: $show_H"
         @test size(T) == size(H) == (2, 3)
     end
 
@@ -184,5 +185,122 @@ using Test
         @test ModelKit.sqr(3) == 3^2
     end
 
-    include("test_instructions.jl")
+    @testset "Instructions" begin
+
+        @testset "Higher order pow diff" begin
+            for d in [2, 5]
+                @var x
+                f = x^d
+                list, _ = ModelKit.instruction_list([f])
+
+                diff_map = Dict()
+                diff_map[(:x, 1)] = :x1
+                diff_map[(:x, 2)] = :x2
+                diff_map[(:x, 3)] = :x3
+
+                @eval ModelKit begin
+                    function __diff_4_pow(x, x1, x2, x3, t)
+                        $(ModelKit.to_expr(ModelKit.univariate_diff!(
+                            list,
+                            4,
+                            diff_map,
+                        )))
+                    end
+                end
+
+                SE.@vars x t
+                SE.@funs u
+
+                exp1 = SE.expand(SE.subs(
+                    SE.diff(u(t)^d, t, 4),
+                    SE.diff(u(t), t, 4) => 0,
+                ) / factorial(4),)
+
+                u1 = SE.diff(u(t), t)
+                u2 = SE.diff(u(t), t, 2) / 2
+                u3 = SE.diff(u(t), t, 3) / 6
+                exp2 = SE.expand(ModelKit.__diff_4_pow(u(t), u1, u2, u3, t))
+                @test exp1 == exp2
+            end
+        end
+
+        @testset "Higher order mul" begin
+            @var x y
+            f = x * y
+            list, _ = ModelKit.instruction_list([f])
+
+            diff_map = Dict()
+            diff_map[(:x, 1)] = :x1
+            diff_map[(:x, 2)] = :x2
+            diff_map[(:x, 3)] = :x3
+            diff_map[(:y, 1)] = :y1
+            diff_map[(:y, 2)] = :y2
+            diff_map[(:y, 3)] = :y3
+
+            @eval ModelKit begin
+                function __diff_4_mul__(x, y, t)
+                    x1 = Main.SE.diff(x, t)
+                    x2 = Main.SE.diff(x, t, 2) / 2
+                    x3 = Main.SE.diff(x, t, 3) / 6
+                    y1 = Main.SE.diff(y, t)
+                    y2 = Main.SE.diff(y, t, 2) / 2
+                    y3 = Main.SE.diff(y, t, 3) / 6
+                    $(ModelKit.to_expr(ModelKit.univariate_diff!(
+                        list,
+                        4,
+                        diff_map,
+                    )))
+                end
+            end
+
+            SE.@funs u v
+            SE.@vars t
+
+            exp1 = SE.expand(SE.subs(
+                SE.diff(u(t) * v(t), t, 4),
+                SE.diff(u(t), t, 4) => 0,
+                SE.diff(v(t), t, 4) => 0,
+            ) / factorial(4),)
+            exp2 = SE.expand(ModelKit.__diff_4_mul__(u(t), v(t), t))
+            @test exp1 == exp2
+        end
+
+        @testset "Higher order plus" begin
+            @var x y
+            f = x + y
+            list, _ = ModelKit.instruction_list([f])
+
+            diff_map = Dict()
+            diff_map[(:x, 1)] = :x1
+            diff_map[(:x, 2)] = :x2
+            diff_map[(:x, 3)] = :x3
+            diff_map[(:y, 1)] = :y1
+            diff_map[(:y, 2)] = :y2
+            diff_map[(:y, 3)] = :y3
+
+            @eval ModelKit begin
+                function __diff_3_plus__(x, y, t)
+                    x1 = Main.SE.diff(x, t)
+                    x2 = Main.SE.diff(x, t, 2) / 2
+                    x3 = Main.SE.diff(x, t, 3) / 6
+                    y1 = Main.SE.diff(y, t)
+                    y2 = Main.SE.diff(y, t, 2) / 2
+                    y3 = Main.SE.diff(y, t, 3) / 6
+                    $(ModelKit.to_expr(ModelKit.univariate_diff!(
+                        list,
+                        3,
+                        diff_map,
+                    )))
+                end
+            end
+
+            SE.@funs u v
+            SE.@vars t
+
+            exp1 = SE.expand(diff(u(t) + v(t), t, 3) / factorial(3))
+            exp2 = SE.expand(ModelKit.__diff_3_plus__(u(t), v(t), t))
+            @test exp1 == exp2
+        end
+    end
+
 end

@@ -43,15 +43,15 @@ end
 
 function flat_expr!(
     v,
-    ex::Expression,
+    ex::Basic,
     # common sub expression
     CSE::Dict{Expression,Expression},
     # processed sub expression
     PSE::Set{Symbol} = Set{Symbol}(),
 )
-    t = ModelKit.type(ex)
+    t = class(ex)
     if t == :Symbol
-        s = Symbol(SE.toString(ex))
+        s = Symbol(to_string(ex))
         if haskey(CSE, ex) && s ∉ PSE
             push!(PSE, s)
             val = flat_expr!(v, CSE[ex], CSE, PSE)
@@ -61,13 +61,7 @@ function flat_expr!(
                 push!(v, s => val)
             end
         end
-        return Symbol(SE.toString(ex))
-    elseif t == :Integer
-        return to_smallest_integer(ex)
-    elseif t == :RealDouble
-        return convert(Cdouble, SE.BasicType{Val{:RealDouble}}(ex))
-    elseif t in ModelKit.NUMBER_TYPES || (t == :Constant)
-        return SE.N(ex)
+        return s
     elseif t == :Pow
         x, k = ModelKit.args(ex)
         return push!(v, (:^, flat_expr!(v, x, CSE, PSE), convert(Int, k)))
@@ -79,23 +73,14 @@ function flat_expr!(
             op_arg = push!(v, (op, op_arg, flat_expr!(v, vec[i], CSE, PSE)))
         end
         return op_arg
+    elseif t == :Div
+        x, y = ModelKit.args(ex)
+        return push!(
+            v,
+            (:/, flat_expr!(v, x, CSE, PSE), flat_expr!(v, y, CSE, PSE)),
+        )
     else
-        error("Not supported: ", ex)
-    end
-end
-
-
-
-function to_smallest_integer(ex)
-    x = convert(BigInt, SE.BasicType{Val{:Integer}}(ex))
-    if typemin(Int32) ≤ x ≤ typemax(Int32)
-        return convert(Int32, x)
-    elseif typemin(Int64) ≤ x ≤ typemax(Int64)
-        return convert(Int64, x)
-    elseif typemin(Int128) ≤ x ≤ typemax(Int128)
-        return convert(Int128, x)
-    else
-        return x
+        return to_number(ex)
     end
 end
 
@@ -291,7 +276,7 @@ function univariate_diff!(list::InstructionList, K::Int, diff_map)
                     for j = 0:k
                         u_j = j == 0 ? arg1 : get(diff_map, (arg1, j), nothing)
                         u_kj = j == k ? arg1 :
-                            get(diff_map, (arg1, k - j), nothing)
+                               get(diff_map, (arg1, k - j), nothing)
                         if j < k - j && u_j !== nothing && u_kj !== nothing
                             s = push!(v, (:*, u_j, u_kj))
                             if w_k === nothing
@@ -334,7 +319,7 @@ function univariate_diff!(list::InstructionList, K::Int, diff_map)
                             ũ_j = nothing
                         end
 
-                        w_kj = k == j ? w_0 : w[k - j]
+                        w_kj = k == j ? w_0 : w[k-j]
                         if ũ_j == 1
                             s_j = w_kj
                         elseif ũ_j !== nothing

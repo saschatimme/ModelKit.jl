@@ -140,16 +140,21 @@ for op in [:im, :π, :ℯ, :γ, :catalan]
         const $(Symbol("__", op)) = Expression(C_NULL)
     end
 end
+const SYMENGINE_CONSTANTS = Dict{Expression,Irrational}()
 
 macro init_constant(op, libnm)
     tup = (Base.Symbol("basic_const_$libnm"), libsymengine)
     alloc_tup = (:basic_new_stack, libsymengine)
     op_name = Symbol("__", op)
-    :(begin
+    c = quote
         ccall($alloc_tup, Nothing, (Ref{Expression},), $op_name)
         ccall($tup, Nothing, (Ref{Expression},), $op_name)
         finalizer(free!, $op_name)
-    end)
+        $(op != :im ?
+          :(SYMENGINE_CONSTANTS[$op_name] = Base.MathConstants.$op) :
+          :(nothing))
+    end
+    c
 end
 
 function __init_constants()
@@ -165,17 +170,27 @@ end
 ################
 
 ## main ops
-for (op, libnm) in [
-    (:+, :add),
-    (:-, :sub),
-    (:*, :mul),
-    (:/, :div),
-    (://, :div),
+for (op, inplace, libnm) in [
+    (:+, :add!, :add),
+    (:-, :sub!, :sub),
+    (:*, :mul!, :mul),
+    (:/, :div!, :div),
 ]
-    f = Expr(:., :Base, QuoteNode(op))
     @eval begin
-        function $f(b1::Basic, b2::Basic)
+        function $(Expr(:., :Base, QuoteNode(op)))(b1::Basic, b2::Basic)
             a = Expression()
+            ccall(
+                $((Symbol("basic_", libnm), libsymengine)),
+                Nothing,
+                (Ref{Expression}, Ref{ExpressionRef}, Ref{ExpressionRef}),
+                a,
+                b1,
+                b2,
+            )
+            return a
+        end
+
+        function $(inplace)(a::Expression, b1::Basic, b2::Basic)
             ccall(
                 $((Symbol("basic_", libnm), libsymengine)),
                 Nothing,
@@ -189,6 +204,7 @@ for (op, libnm) in [
     end
 end
 
+Base.:(//)(x::Basic, y::Basic) = x / y
 function Base.:(^)(x::Basic, k::Integer)
     a = Expression()
     ccall(
@@ -222,7 +238,7 @@ macro make_func(arg1, arg2)
     end
 end
 
-@make_func expand basic_expand
+@make_func symengine_expand basic_expand
 
 ##############################
 ## conversion to Expression ##
@@ -429,12 +445,11 @@ end
 
 mutable struct ExprVec <: AbstractVector{ExpressionRef}
     ptr::Ptr{Cvoid}
-    m::Ptr{ModelKit.ExpressionRef}
+    m::Union{Nothing,Ptr{ModelKit.ExpressionRef}}
 
     function ExprVec()
         ptr = ccall((:vecbasic_new, libsymengine), Ptr{Cvoid}, ())
-        m = Ptr{Ptr{ModelKit.ExpressionRef}}()
-        z = new(ptr, m)
+        z = new(ptr, nothing)
         finalizer(free!, z)
         z
     end
@@ -458,15 +473,31 @@ Base.size(s::ExprVec) = (length(s),)
 
 function Base.getindex(v::ExprVec, n)
     @boundscheck checkbounds(v, n)
-    unsafe_load(v.m, n)
+    if v.m === nothing
+        vec_set_ptr!(v)
+        unsafe_load(v.m, n)
+    else
+        unsafe_load(v.m, n)
+    end
+end
+
+function Base.push!(v::ExprVec, x::Basic)
+    ccall(
+        (:vecbasic_push_back, libsymengine),
+        Nothing,
+        (Ptr{Cvoid}, Ref{ExpressionRef}),
+        v.ptr,
+        x,
+    )
+    v
 end
 
 args(ex::Expression) = args!(ExprVec(), ex)
-function args!(vec::ExprVec, ex::Expression)
+function args!(vec::ExprVec, ex::Basic)
     ccall(
         (:basic_get_args, libsymengine),
         Nothing,
-        (Ref{Expression}, Ptr{Cvoid}),
+        (Ref{ExpressionRef}, Ptr{Cvoid}),
         ex,
         vec.ptr,
     )
@@ -580,6 +611,8 @@ function to_number(x::Basic)
         return to_number(a) // to_number(b)
     elseif cls == :RealMPFR
         return convert(BigFloat, x)
+    elseif cls == :Constant
+        return SYMENGINE_CONSTANTS[x]
     elseif cls in COMPLEX_NUMBER_TYPES
         a, b = reim(x)
         return complex(to_number(a), to_number(b))
@@ -591,6 +624,83 @@ end
 ##########
 ## SUBS ##
 ##########
+
+mutable struct ExpressionMap
+    ptr::Ptr{Cvoid}
+
+    function ExpressionMap()
+        x = new(ccall((:mapbasicbasic_new, libsymengine), Ptr{Cvoid}, ()))
+        finalizer(free!, x)
+        x
+    end
+end
+
+function free!(x::ExpressionMap)
+    if x.ptr != C_NULL
+        ccall(
+            (:mapbasicbasic_free, libsymengine),
+            Nothing,
+            (Ptr{Cvoid},),
+            x.ptr,
+        )
+        x.ptr = C_NULL
+    end
+end
+
+function ExpressionMap(dict::Dict)
+    c = ExpressionMap()
+    for (key, value) in dict
+        c[Expression(key)] = Expression(value)
+    end
+    return c
+end
+
+function Base.length(s::ExpressionMap)
+    ccall((:mapbasicbasic_size, libsymengine), Int, (Ptr{Cvoid},), s.ptr)
+end
+
+function Base.getindex(s::ExpressionMap, k::Basic)
+    result = Expression()
+    ret = ccall(
+        (:mapbasicbasic_get, libsymengine),
+        Int,
+        (Ptr{Cvoid}, Ref{ExpressionRef}, Ref{Basic}),
+        s.ptr,
+        k,
+        result,
+    )
+    if ret == 0
+        throw(KeyError(k))
+    end
+    result
+end
+
+Base.setindex!(s::ExpressionMap, v::Number, k::Basic) =
+    setindex!(s, Expression(v), k)
+function Base.setindex!(s::ExpressionMap, v::Basic, k::Basic)
+    ccall(
+        (:mapbasicbasic_insert, libsymengine),
+        Nothing,
+        (Ptr{Cvoid}, Ref{ExpressionRef}, Ref{ExpressionRef}),
+        s.ptr,
+        k,
+        v,
+    )
+    v
+end
+
+function subs(ex::Basic, d::ExpressionMap)
+    s = Expression()
+    ccall(
+        (:basic_subs, libsymengine),
+        Nothing,
+        (Ref{Expression}, Ref{ExpressionRef}, Ptr{Cvoid}),
+        s,
+        ex,
+        d.ptr,
+    )
+    return s
+end
 
 subs(ex::Basic, (k, v)::Pair{<:Basic,<:Number}) = subs(ex, k => Expression(v))
 function subs(ex::Basic, (k, v)::Pair{<:Basic,<:Basic})
@@ -610,6 +720,33 @@ function subs(ex::Basic, (k, v)::Pair{<:Basic,<:Basic})
         v,
     )
     return s
+end
+
+function cse(exprs::Vector{Expression})
+    vec = ExprVec()
+    for ex in exprs
+        push!(vec, ex)
+    end
+
+    replacement_syms = ExprVec()
+    replacement_exprs = ExprVec()
+    reduced_exprs = ExprVec()
+
+    ccall(
+        (:basic_cse, libsymengine),
+        Nothing,
+        (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}),
+        replacement_syms.ptr,
+        replacement_exprs.ptr,
+        reduced_exprs.ptr,
+        vec.ptr,
+    )
+
+    subs = Dict{Expression,Expression}()
+    for (sᵢ, exᵢ) in zip(replacement_syms, replacement_exprs)
+        subs[sᵢ] = exᵢ
+    end
+    map(Expression, reduced_exprs), subs
 end
 
 ############

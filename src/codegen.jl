@@ -1,3 +1,5 @@
+export compile
+
 #####################
 ## CompiledSystem  ##
 #####################
@@ -48,9 +50,9 @@ interpret(TS::CompiledSystem) = interpret(typeof(TS))
 interpret(::Type{CompiledSystem{H,I}}) where {H,I} =
     System(TSYSTEM_TABLE[H][I]...)
 
-Base.size(CS::CompiledSystem) = (CH.nexpressions, length(CH.variables))
+Base.size(CS::CompiledSystem) = (CS.nexpressions, length(CS.variables))
 Base.size(CS::CompiledSystem, i::Integer) = size(CS)[i]
-Base.length(CS::CompiledSystem) = CH.nexpressions
+Base.length(CS::CompiledSystem) = CS.nexpressions
 
 
 ######################

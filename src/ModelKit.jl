@@ -18,9 +18,7 @@ import LinearAlgebra
 
 include("symengine.jl")
 include("symbolic.jl")
-# include("sym_engine.jl")
-
-# include("instructions.jl")
-# include("codegen.jl")
+include("instructions.jl")
+include("codegen.jl")
 
 end # module
